@@ -1,0 +1,388 @@
+import { z } from 'zod';
+import { UnifiedCompanyDataSchema } from './unified-company-data.schema.js';
+import { ErrorResponseSchema } from './error-response.schema.js';
+
+/**
+ * Zod schema for internal state management for XState orchestration machine
+ * Based on data-model.md specification
+ *
+ * Source: Created and maintained by state machine during request processing
+ */
+
+// Company classification sub-schema
+const CompanyClassificationSchema = z
+  .object({
+    silosId: z.string().describe('GUS silo identifier'),
+
+    regon: z
+      .string()
+      .regex(/^\d{9}(\d{5})?$/, 'Must be 9 or 14 digits')
+      .describe('REGON from classification'),
+
+    typ: z.string().describe('Entity type from GUS'),
+
+    // Derived routing flags for convenience
+    requiresKrs: z
+      .boolean()
+      .default(false)
+      .describe('True if silosId = 6 (legal entities)'),
+
+    requiresCeidg: z
+      .boolean()
+      .default(false)
+      .describe('True if silosId = 1 (individual entrepreneurs)'),
+
+    isDeregistered: z
+      .boolean()
+      .default(false)
+      .describe('True if silosId = 4 (deregistered entities)'),
+  })
+  .refine(
+    (data) => {
+      // Auto-calculate routing flags based on silosId
+      const expectedKrs = data.silosId === '6';
+      const expectedCeidg = data.silosId === '1';
+      const expectedDeregistered = data.silosId === '4';
+
+      return (
+        data.requiresKrs === expectedKrs &&
+        data.requiresCeidg === expectedCeidg &&
+        data.isDeregistered === expectedDeregistered
+      );
+    },
+    {
+      message: 'Routing flags must match silosId values',
+      path: ['silosId'],
+    },
+  );
+
+// Last error sub-schema
+const LastErrorSchema = z.object({
+  errorCode: z.string().describe('Standardized error code'),
+
+  message: z.string().describe('Error description'),
+
+  source: z.enum(['GUS', 'KRS', 'CEIDG', 'INTERNAL']).describe('Error origin'),
+
+  originalError: z
+    .any()
+    .optional()
+    .describe('Original error object for logging'),
+
+  timestamp: z
+    .date()
+    .default(() => new Date())
+    .describe('When the error occurred'),
+});
+
+// Retry count tracking schema
+const RetryCountSchema = z.record(z.string(), z.number().min(0));
+
+// Main OrchestrationContext schema
+export const OrchestrationContextSchema = z
+  .object({
+    // Request information
+    nip: z
+      .string()
+      .regex(/^\d{10}$/, 'Must be exactly 10 digits')
+      .describe('Input NIP number'),
+
+    correlationId: z.string().uuid().describe('Request tracking ID (UUID v4)'),
+
+    startTime: z.date().describe('Request start timestamp'),
+
+    // GUS classification data
+    classification: CompanyClassificationSchema.optional().describe(
+      'GUS classification result',
+    ),
+
+    // External API responses (raw data for processing)
+    krsNumber: z
+      .string()
+      .regex(/^\d{10}$/, 'Must be exactly 10 digits')
+      .optional()
+      .describe('KRS number from GUS report'),
+
+    krsData: z.any().optional().describe('Raw KRS API response'),
+
+    ceidgData: z.any().optional().describe('Raw CEIDG API response'),
+
+    gusData: z.any().optional().describe('Raw GUS API response'),
+
+    // Processing results
+    finalCompanyData: UnifiedCompanyDataSchema.optional().describe(
+      'Mapped final result',
+    ),
+
+    // Error tracking
+    lastError: LastErrorSchema.optional().describe(
+      'Most recent error information',
+    ),
+
+    // Retry tracking per service
+    retryCount: RetryCountSchema.default(() => ({
+      GUS: 0,
+      KRS: 0,
+      CEIDG: 0,
+    })).describe('Per-service retry counters'),
+
+    // State machine metadata
+    currentState: z
+      .string()
+      .optional()
+      .describe('Current state machine state for debugging'),
+
+    timeoutAt: z.date().optional().describe('When the request should timeout'),
+
+    // Performance tracking
+    timings: z
+      .record(z.string(), z.number())
+      .default(() => ({}))
+      .describe('Service response time tracking in milliseconds'),
+  })
+  .refine(
+    (data) => {
+      // Validate that if we have finalCompanyData, the NIP matches
+      if (data.finalCompanyData) {
+        return data.finalCompanyData.nip === data.nip;
+      }
+      return true;
+    },
+    {
+      message: 'Final company data NIP must match context NIP',
+      path: ['finalCompanyData', 'nip'],
+    },
+  )
+  .refine(
+    (data) => {
+      // Validate that classification exists if we have KRS or CEIDG data
+      if ((data.krsData || data.ceidgData) && !data.classification) {
+        return false;
+      }
+      return true;
+    },
+    {
+      message:
+        'Classification must exist before external API data can be populated',
+      path: ['classification'],
+    },
+  );
+
+// TypeScript types
+export type OrchestrationContext = z.infer<typeof OrchestrationContextSchema>;
+export type CompanyClassification = z.infer<typeof CompanyClassificationSchema>;
+export type LastError = z.infer<typeof LastErrorSchema>;
+
+// Helper function to create initial context
+export function createInitialContext(
+  nip: string,
+  correlationId: string,
+): OrchestrationContext {
+  return OrchestrationContextSchema.parse({
+    nip,
+    correlationId,
+    startTime: new Date(),
+    retryCount: { GUS: 0, KRS: 0, CEIDG: 0 },
+    timings: {},
+  });
+}
+
+// Helper function to create classification with auto-calculated flags
+export function createCompanyClassification(
+  silosId: string,
+  regon: string,
+  typ: string,
+): CompanyClassification {
+  return CompanyClassificationSchema.parse({
+    silosId,
+    regon,
+    typ,
+    requiresKrs: silosId === '6',
+    requiresCeidg: silosId === '1',
+    isDeregistered: silosId === '4',
+  });
+}
+
+// Context update helpers
+export const ContextUpdaters = {
+  addClassification: (
+    context: OrchestrationContext,
+    classification: CompanyClassification,
+  ): OrchestrationContext => {
+    return OrchestrationContextSchema.parse({
+      ...context,
+      classification,
+    });
+  },
+
+  addKrsData: (
+    context: OrchestrationContext,
+    krsData: any,
+    responseTimeMs?: number,
+  ): OrchestrationContext => {
+    return OrchestrationContextSchema.parse({
+      ...context,
+      krsData,
+      timings: responseTimeMs
+        ? { ...context.timings, KRS: responseTimeMs }
+        : context.timings,
+    });
+  },
+
+  addCeidgData: (
+    context: OrchestrationContext,
+    ceidgData: any,
+    responseTimeMs?: number,
+  ): OrchestrationContext => {
+    return OrchestrationContextSchema.parse({
+      ...context,
+      ceidgData,
+      timings: responseTimeMs
+        ? { ...context.timings, CEIDG: responseTimeMs }
+        : context.timings,
+    });
+  },
+
+  addGusData: (
+    context: OrchestrationContext,
+    gusData: any,
+    responseTimeMs?: number,
+  ): OrchestrationContext => {
+    return OrchestrationContextSchema.parse({
+      ...context,
+      gusData,
+      timings: responseTimeMs
+        ? { ...context.timings, GUS: responseTimeMs }
+        : context.timings,
+    });
+  },
+
+  setFinalData: (
+    context: OrchestrationContext,
+    finalCompanyData: z.infer<typeof UnifiedCompanyDataSchema>,
+  ): OrchestrationContext => {
+    return OrchestrationContextSchema.parse({
+      ...context,
+      finalCompanyData,
+    });
+  },
+
+  addError: (
+    context: OrchestrationContext,
+    error: Omit<LastError, 'timestamp'>,
+  ): OrchestrationContext => {
+    return OrchestrationContextSchema.parse({
+      ...context,
+      lastError: {
+        ...error,
+        timestamp: new Date(),
+      },
+    });
+  },
+
+  incrementRetry: (
+    context: OrchestrationContext,
+    service: keyof typeof context.retryCount,
+  ): OrchestrationContext => {
+    return OrchestrationContextSchema.parse({
+      ...context,
+      retryCount: {
+        ...context.retryCount,
+        [service]: context.retryCount[service] + 1,
+      },
+    });
+  },
+
+  setState: (
+    context: OrchestrationContext,
+    currentState: string,
+  ): OrchestrationContext => {
+    return OrchestrationContextSchema.parse({
+      ...context,
+      currentState,
+    });
+  },
+
+  setTimeout: (
+    context: OrchestrationContext,
+    timeoutMs: number,
+  ): OrchestrationContext => {
+    const timeoutAt = new Date(context.startTime.getTime() + timeoutMs);
+    return OrchestrationContextSchema.parse({
+      ...context,
+      timeoutAt,
+    });
+  },
+};
+
+// Context query helpers
+export const ContextQueries = {
+  hasClassification: (context: OrchestrationContext): boolean => {
+    return context.classification !== undefined;
+  },
+
+  requiresKrsData: (context: OrchestrationContext): boolean => {
+    return context.classification?.requiresKrs === true;
+  },
+
+  requiresCeidgData: (context: OrchestrationContext): boolean => {
+    return context.classification?.requiresCeidg === true;
+  },
+
+  isDeregistered: (context: OrchestrationContext): boolean => {
+    return context.classification?.isDeregistered === true;
+  },
+
+  hasAllRequiredData: (context: OrchestrationContext): boolean => {
+    if (!context.classification) return false;
+
+    // Always need GUS data
+    if (!context.gusData) return false;
+
+    // Check service-specific requirements
+    if (context.classification.requiresKrs && !context.krsData) return false;
+    if (context.classification.requiresCeidg && !context.ceidgData)
+      return false;
+
+    return true;
+  },
+
+  canRetry: (
+    context: OrchestrationContext,
+    service: string,
+    maxRetries: number,
+  ): boolean => {
+    return (context.retryCount[service] || 0) < maxRetries;
+  },
+
+  isTimedOut: (context: OrchestrationContext): boolean => {
+    if (!context.timeoutAt) return false;
+    return new Date() > context.timeoutAt;
+  },
+
+  getElapsedTimeMs: (context: OrchestrationContext): number => {
+    return new Date().getTime() - context.startTime.getTime();
+  },
+
+  getAverageResponseTime: (context: OrchestrationContext): number => {
+    const times = Object.values(context.timings).filter((t) => t > 0);
+    if (times.length === 0) return 0;
+    return times.reduce((sum, time) => sum + time, 0) / times.length;
+  },
+};
+
+// Validation helpers
+export function validateOrchestrationContext(
+  data: unknown,
+): OrchestrationContext {
+  return OrchestrationContextSchema.parse(data);
+}
+
+export function isValidOrchestrationContext(
+  data: unknown,
+): data is OrchestrationContext {
+  return OrchestrationContextSchema.safeParse(data).success;
+}
+
+// Export sub-schemas for reuse
+export { CompanyClassificationSchema, LastErrorSchema, RetryCountSchema };
