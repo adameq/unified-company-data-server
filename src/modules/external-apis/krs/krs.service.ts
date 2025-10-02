@@ -1,21 +1,35 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
 import { z } from 'zod';
 import {
   createErrorResponse,
   ErrorResponseCreators,
   type ErrorResponse,
-} from '@schemas/error-response.schema.js';
-import { validateEnvironment } from '@config/environment.schema.js';
+} from '../../../schemas/error-response.schema';
+import { type Environment } from '../../../config/environment.schema';
+import { BusinessException } from '../../../common/exceptions/business-exceptions';
 
 /**
  * KRS REST Service for Polish Court Register API
  *
  * Handles:
  * - REST API calls to api-krs.ms.gov.pl
- * - P→S registry fallback strategy (Entrepreneurs → Associations)
  * - Rate limiting and timeout handling
  * - Response validation with Zod schemas
+ *
+ * Registry Selection:
+ * - Registry selection (P vs S) is handled by orchestration layer
+ * - This service only executes HTTP requests to specified registry
+ * - P→S fallback logic is in orchestration-machine.provider.ts
+ *
+ * Retry Strategy:
+ * - Service-level retry is NOT implemented (methods throw errors directly)
+ * - Retry logic is handled by orchestration.machine.ts using retry.machine.ts
+ * - Configuration: KRS_MAX_RETRIES (default 2), KRS_INITIAL_DELAY (default 200ms)
+ * - Retries on: 5xx server errors (500, 502, 503)
+ * - No retry on: 404 Not Found, 400 Bad Request, 429 Rate Limit
+ * - Exponential backoff with jitter managed by retry.machine.ts
  *
  * Constitutional compliance:
  * - All responses validated with Zod schemas
@@ -34,16 +48,24 @@ const KrsAddressSchema = z.object({
 });
 
 const KrsEntityDataSchema = z.object({
+  formaPrawna: z.string(),
+  identyfikatory: z.object({
+    nip: z.string().regex(/^\d{10}$/),
+    regon: z.string(),
+  }),
   nazwa: z.string(),
-  nip: z
-    .string()
-    .regex(/^\d{10}$/)
-    .optional(),
-  regon: z.string().optional(),
-  krs: z.string().regex(/^\d{10}$/),
+  dataWykreslenia: z.string().nullable().optional(),
+  czyPosiadaStatusOPP: z.boolean().optional(),
 });
 
 const KrsSeatAddressSchema = z.object({
+  siedziba: z.object({
+    kraj: z.string(),
+    wojewodztwo: z.string(),
+    powiat: z.string(),
+    gmina: z.string(),
+    miejscowosc: z.string(),
+  }),
   adres: KrsAddressSchema,
 });
 
@@ -54,24 +76,52 @@ const KrsPartnerSchema = z.object({
 
 const KrsSection1Schema = z.object({
   danePodmiotu: KrsEntityDataSchema,
-  siedzibaiAdres: KrsSeatAddressSchema.optional(),
+  siedzibaIAdres: KrsSeatAddressSchema.optional(),
 });
 
 const KrsSection2Schema = z.object({
   wspolnicy: z.array(KrsPartnerSchema).optional(),
 });
 
+// Dzial 6 schemas for bankruptcy and liquidation status (per dokumentacja.md section 3)
+const KrsLiquidationSchema = z
+  .object({
+    dataRozpoczecia: z.string().optional(),
+    // Other fields exist but we only need to detect presence
+  })
+  .passthrough(); // Allow additional fields we don't need to validate
+
+const KrsBankruptcySchema = z
+  .object({
+    dataPostanowienia: z.string().optional(),
+    // Other fields exist but we only need to detect presence
+  })
+  .passthrough();
+
+const KrsSection6Schema = z
+  .object({
+    likwidacja: z.array(KrsLiquidationSchema).optional(),
+    postepowanieUpadlosciowe: z.array(KrsBankruptcySchema).optional(),
+  })
+  .optional();
+
 const KrsDataSchema = z.object({
   dzial1: KrsSection1Schema,
   dzial2: KrsSection2Schema.optional(),
+  dzial6: KrsSection6Schema.optional(),
 });
 
 const KrsHeaderSchema = z.object({
-  stanNa: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  rejestr: z.string(),
+  numerKRS: z.string(),
+  stanZDnia: z.string(),
+  dataRejestracjiWKRS: z.string().optional(),
+  stanPozycji: z.number().optional(), // Entity status: 1=active, 3=deleted but visible, 4=deleted
 });
 
-const KrsResponseSchema = z.object({
+export const KrsResponseSchema = z.object({
   odpis: z.object({
+    rodzaj: z.string(),
     dane: KrsDataSchema,
     naglowekA: KrsHeaderSchema,
   }),
@@ -101,18 +151,18 @@ export class KrsService {
   private readonly config: KrsConfig;
   private readonly httpClient: AxiosInstance;
 
-  constructor() {
-    const env = validateEnvironment();
+  constructor(
+    private readonly configService: ConfigService<Environment, true>,
+  ) {
     this.config = {
-      baseUrl: env.KRS_BASE_URL,
-      timeout: env.EXTERNAL_API_TIMEOUT,
+      baseUrl: this.configService.get('KRS_BASE_URL', { infer: true }),
+      timeout: this.configService.get('EXTERNAL_API_TIMEOUT', { infer: true }),
       retryConfig: {
-        maxRetries: env.KRS_MAX_RETRIES,
-        initialDelay: env.KRS_INITIAL_DELAY,
+        maxRetries: this.configService.get('KRS_MAX_RETRIES', { infer: true }),
+        initialDelay: this.configService.get('KRS_INITIAL_DELAY', { infer: true }),
       },
     };
 
-    // Configure axios client
     this.httpClient = axios.create({
       baseURL: this.config.baseUrl,
       timeout: this.config.timeout,
@@ -138,13 +188,27 @@ export class KrsService {
   }
 
   /**
-   * Fetch company data by KRS number with P→S registry fallback
+   * Fetch company data from specific KRS registry
+   *
+   * Registry selection (P vs S) is handled by orchestration layer.
+   * This method only executes HTTP request to specified registry.
+   *
+   * @param krsNumber - 10-digit KRS number
+   * @param registry - Registry type: 'P' (entrepreneurs) or 'S' (associations/foundations)
+   * @param correlationId - Request correlation ID for tracking
+   * @returns Validated KRS response data
+   * @throws BusinessException with error code (404, 5xx, validation errors)
    */
-  async fetchCompanyByKrs(
+  async fetchFromRegistry(
     krsNumber: string,
+    registry: RegistryType,
     correlationId: string,
   ): Promise<KrsResponse> {
-    this.logger.log(`Fetching KRS data for: ${krsNumber}`, { correlationId });
+    this.logger.log(`Fetching KRS data from registry ${registry}`, {
+      correlationId,
+      krsNumber,
+      registry,
+    });
 
     // Validate KRS number format
     if (!this.isValidKrsNumber(krsNumber)) {
@@ -156,56 +220,94 @@ export class KrsService {
       });
     }
 
-    // Try P registry first (entrepreneurs), then S registry (associations)
-    const registryTypes: RegistryType[] = ['P', 'S'];
+    try {
+      const response = await this.makeKrsRequest(
+        krsNumber,
+        registry,
+        correlationId,
+      );
 
-    for (const registry of registryTypes) {
-      try {
-        this.logger.log(`Trying KRS registry: ${registry}`, {
+      // Handle HTTP 204 No Content (deregistered entity)
+      if (response.status === 204 || !response.data) {
+        this.logger.log(`Entity is deregistered (HTTP 204 or empty response)`, {
           correlationId,
-          krsNumber,
-        });
-
-        const response = await this.makeKrsRequest(
           krsNumber,
           registry,
-          correlationId,
-        );
-
-        // Validate response with Zod
-        const validatedData = KrsResponseSchema.parse(response.data);
-
-        this.logger.log(`KRS data found in registry: ${registry}`, {
-          correlationId,
-          krsNumber,
-          companyName: validatedData.odpis.dane.dzial1.danePodmiotu.nazwa,
+          status: response.status,
         });
 
-        return validatedData;
-      } catch (error) {
-        // If 404 in P registry, try S registry
-        if (this.isNotFoundError(error) && registry === 'P') {
-          this.logger.log(`Entity not found in P registry, trying S registry`, {
-            correlationId,
-            krsNumber,
-          });
-          continue;
-        }
-
-        // If this is the last registry or a non-404 error, handle it
-        if (registry === 'S' || !this.isNotFoundError(error)) {
-          throw this.handleKrsError(error, correlationId, krsNumber, registry);
-        }
+        throw createErrorResponse({
+          errorCode: 'ENTITY_NOT_FOUND',
+          message: `Entity not found in ${registry} registry (HTTP 204)`,
+          correlationId,
+          source: 'KRS',
+          details: { registry, krsNumber },
+        });
       }
-    }
 
-    // If we get here, entity was not found in any registry
-    throw createErrorResponse({
-      errorCode: 'ENTITY_NOT_FOUND',
-      message: `Entity not found in KRS for number: ${krsNumber}`,
-      correlationId,
-      source: 'KRS',
-    });
+      // Log raw KRS response for debugging
+      this.logger.log(`Raw KRS API response received`, {
+        correlationId,
+        krsNumber,
+        registry,
+        responseKeys: Object.keys(response.data || {}),
+        responseData: JSON.stringify(response.data, null, 2).substring(0, 2000),
+      });
+
+      // Validate response with Zod using safeParse
+      const validation = KrsResponseSchema.safeParse(response.data);
+      if (!validation.success) {
+        this.logger.error(`KRS API response failed schema validation`, {
+          correlationId,
+          krsNumber,
+          registry,
+          zodErrors: validation.error.issues,
+          responsePreview: JSON.stringify(response.data).substring(0, 500),
+        });
+
+        const errorResponse = createErrorResponse({
+          errorCode: 'KRS_VALIDATION_FAILED',
+          message: 'KRS API response failed schema validation',
+          correlationId,
+          source: 'KRS',
+          details: {
+            zodErrors: validation.error.issues,
+            registry,
+            krsNumber,
+          },
+        });
+        throw new BusinessException(errorResponse);
+      }
+
+      const validatedData = validation.data;
+
+      this.logger.log(`KRS response validated successfully`, {
+        correlationId,
+        krsNumber,
+        registry,
+        companyName: validatedData.odpis.dane.dzial1.danePodmiotu.nazwa,
+        krsFromResponse: validatedData.odpis.naglowekA.numerKRS,
+      });
+
+      return validatedData;
+    } catch (error) {
+      // Convert error to standardized ErrorResponse format
+      const errorResponse = this.handleKrsError(error, correlationId, krsNumber, registry);
+      throw new BusinessException(errorResponse);
+    }
+  }
+
+  /**
+   * Fetch company data by KRS number (convenience method)
+   *
+   * @deprecated Use fetchFromRegistry() instead for better control.
+   *             This method tries P registry only for backward compatibility.
+   */
+  async fetchCompanyByKrs(
+    krsNumber: string,
+    correlationId: string,
+  ): Promise<KrsResponse> {
+    return this.fetchFromRegistry(krsNumber, 'P', correlationId);
   }
 
   /**
@@ -256,6 +358,11 @@ export class KrsService {
         headers: {
           'X-Correlation-ID': correlationId,
         },
+        validateStatus: (status) => {
+          // Accept 200 OK and 204 No Content (deregistered entity)
+          // 404 will be rejected and caught in catch block
+          return status >= 200 && status < 300;
+        },
       });
 
       const responseTime = Date.now() - startTime;
@@ -288,15 +395,6 @@ export class KrsService {
    */
   private isValidKrsNumber(krsNumber: string): boolean {
     return /^\d{10}$/.test(krsNumber);
-  }
-
-  /**
-   * Check if error is a 404 Not Found
-   */
-  private isNotFoundError(error: any): boolean {
-    return (
-      error.response?.status === 404 || error.errorCode === 'ENTITY_NOT_FOUND'
-    );
   }
 
   /**
@@ -418,6 +516,32 @@ export class KrsService {
       },
     });
   }
+
+  /**
+   * Health check - lightweight API availability test
+   * Uses HEAD request to minimize data transfer
+   */
+  async checkHealth(): Promise<'healthy' | 'unhealthy'> {
+    try {
+      // HEAD request with minimal KRS number to check API availability
+      const response = await this.httpClient.head('/api/krs/P/0000000001', {
+        timeout: 2000,
+        validateStatus: (status) => status === 200 || status === 404,
+      });
+
+      this.logger.log('KRS health check passed', {
+        status: response.status,
+      });
+
+      return 'healthy';
+    } catch (error) {
+      this.logger.warn('KRS health check failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      return 'unhealthy';
+    }
+  }
 }
 
 // Utility functions for data mapping
@@ -427,13 +551,13 @@ export const KrsMappers = {
    */
   extractBasicInfo: (krsResponse: KrsResponse) => {
     const entity = krsResponse.odpis.dane.dzial1.danePodmiotu;
-    const address = krsResponse.odpis.dane.dzial1.siedzibaiAdres?.adres;
+    const address = krsResponse.odpis.dane.dzial1.siedzibaIAdres?.adres;
 
     return {
       nazwa: entity.nazwa,
-      nip: entity.nip,
-      regon: entity.regon,
-      krs: entity.krs,
+      nip: entity.identyfikatory.nip || undefined,
+      regon: entity.identyfikatory.regon,
+      krs: krsResponse.odpis.naglowekA.numerKRS,
       adres: address
         ? {
             miejscowosc: address.miejscowosc,
@@ -443,7 +567,7 @@ export const KrsMappers = {
             numerLokalu: address.nrLokalu,
           }
         : undefined,
-      dataStanu: krsResponse.odpis.naglowekA.stanNa,
+      dataStanu: krsResponse.odpis.naglowekA.stanZDnia,
     };
   },
 

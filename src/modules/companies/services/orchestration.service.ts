@@ -1,0 +1,401 @@
+import { Injectable, Logger, Inject } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { createActor, fromPromise } from 'xstate';
+import { z } from 'zod';
+import { UnifiedCompanyDataSchema } from '../../../schemas/unified-company-data.schema';
+import {
+  createErrorResponse,
+  type ErrorResponse,
+} from '../../../schemas/error-response.schema';
+import { GusService } from '../../external-apis/gus/gus.service';
+import { KrsService } from '../../external-apis/krs/krs.service';
+import { CeidgV3Service } from '../../external-apis/ceidg/ceidg-v3.service';
+import { UnifiedDataMapper } from '../mappers/unified-data.mapper';
+import { BusinessException } from '../../../common/exceptions/business-exceptions';
+import type { Environment } from '../../../config/environment.schema';
+import {
+  ORCHESTRATION_MACHINE,
+  wrapWithRetry,
+  type OrchestrationMachineConfig,
+} from '../providers/orchestration-machine.provider';
+
+/**
+ * Orchestration Service - Bridge between Controllers and State Machines
+ *
+ * Responsibilities:
+ * - Initialize and manage orchestration state machine
+ * - Inject external service dependencies via machine.provide()
+ * - Handle state machine execution and error propagation
+ * - Convert state machine results to controller responses
+ * - Provide correlation tracking throughout the workflow
+ * - Provide health check functionality for external service monitoring
+ *
+ * Architecture:
+ * - Uses XState v5 setup() + provide() pattern for dependency injection
+ * - Base machine injected via ORCHESTRATION_MACHINE token
+ * - Concrete service implementations injected via machine.provide()
+ * - Eliminates Service Locator anti-pattern
+ */
+
+type UnifiedCompanyData = z.infer<typeof UnifiedCompanyDataSchema>;
+
+@Injectable()
+export class OrchestrationService {
+  private readonly logger = new Logger(OrchestrationService.name);
+
+  constructor(
+    @Inject(ORCHESTRATION_MACHINE) private readonly baseMachine: any,
+    private readonly gusService: GusService,
+    private readonly krsService: KrsService,
+    private readonly ceidgService: CeidgV3Service,
+    private readonly unifiedDataMapper: UnifiedDataMapper,
+    private readonly configService: ConfigService<Environment, true>,
+  ) {
+    this.logger.log('OrchestrationService initialized', {
+      architecture: 'XState v5 with DI',
+      healthCheckStrategy: 'live (no caching)',
+    });
+  }
+
+  /**
+   * Main entry point for company data retrieval
+   * Orchestrates the complete workflow using state machine
+   */
+  async getCompanyData(
+    nip: string,
+    correlationId: string,
+  ): Promise<UnifiedCompanyData> {
+    this.logger.log(
+      `🚀 Starting XState orchestration machine for company data retrieval`,
+      {
+        nip,
+        correlationId,
+        architecture: 'XState-based',
+      },
+    );
+
+    try {
+      // Build machine configuration from ConfigService
+      // ConfigService returns correctly typed numbers (validated by Zod schema at app startup)
+      const config: OrchestrationMachineConfig = {
+        timeouts: {
+          total: this.configService.get('ORCHESTRATION_TIMEOUT', { infer: true }),
+          perService: this.configService.get('EXTERNAL_API_TIMEOUT', { infer: true }),
+        },
+        retry: {
+          gus: {
+            maxRetries: this.configService.get('GUS_MAX_RETRIES', { infer: true }),
+            initialDelay: this.configService.get('GUS_INITIAL_DELAY', { infer: true }),
+          },
+          krs: {
+            maxRetries: this.configService.get('KRS_MAX_RETRIES', { infer: true }),
+            initialDelay: this.configService.get('KRS_INITIAL_DELAY', { infer: true }),
+          },
+          ceidg: {
+            maxRetries: this.configService.get('CEIDG_MAX_RETRIES', { infer: true }),
+            initialDelay: this.configService.get('CEIDG_INITIAL_DELAY', { infer: true }),
+          },
+        },
+      };
+
+      this.logger.log(`🔄 Configuring XState orchestration machine with DI`, {
+        correlationId,
+        architecture: 'XState v5 setup() + provide()',
+      });
+
+      // Use machine.provide() to inject concrete implementations (XState v5 pattern)
+      // This replaces the Service Locator anti-pattern with proper DI
+      const configuredMachine = this.baseMachine.provide({
+        actors: {
+          // GUS Classification with retry logic
+          fetchGusClassification: fromPromise(async ({ input }: any) => {
+            return wrapWithRetry(
+              'GUS',
+              () => this.gusService.getClassificationByNip(input.nip, input.correlationId),
+              config.retry.gus,
+              input.correlationId,
+              input.logger,
+            );
+          }),
+
+          // GUS Detailed Data with retry logic
+          fetchGusDetailedData: fromPromise(async ({ input }: any) => {
+            return wrapWithRetry(
+              'GUS',
+              () => this.gusService.getDetailedReport(input.regon, input.silosId, input.correlationId),
+              config.retry.gus,
+              input.correlationId,
+              input.logger,
+            );
+          }),
+
+          // KRS Data with retry logic (registry-specific)
+          fetchKrsDataFromRegistry: fromPromise(async ({ input }: any) => {
+            return wrapWithRetry(
+              'KRS',
+              () => this.krsService.fetchFromRegistry(input.krsNumber, input.registry, input.correlationId),
+              config.retry.krs,
+              input.correlationId,
+              input.logger,
+            );
+          }),
+
+          // CEIDG Data with retry logic
+          fetchCeidgData: fromPromise(async ({ input }: any) => {
+            return wrapWithRetry(
+              'CEIDG',
+              () => this.ceidgService.getCompanyByNip(input.nip, input.correlationId),
+              config.retry.ceidg,
+              input.correlationId,
+              input.logger,
+            );
+          }),
+
+          // Inactive company mapping (no retry needed)
+          mapInactiveCompany: fromPromise(async ({ input }: any) => {
+            const context = input;
+            this.logger.log('mapInactiveCompany started', {
+              correlationId: context.correlationId,
+              endDate: context.classification?.DataZakonczeniaDzialalnosci,
+            });
+
+            const mappingContext = {
+              nip: context.nip,
+              correlationId: context.correlationId,
+              gusClassification: context.classification,
+              gusDetailedData: undefined,
+              krsData: undefined,
+              ceidgData: undefined,
+            };
+
+            return this.unifiedDataMapper.mapToUnifiedFormat(mappingContext);
+          }),
+
+          // Unified data mapping (no retry needed)
+          mapToUnifiedFormat: fromPromise(async ({ input }: any) => {
+            const context = input;
+            this.logger.log('mapToUnifiedFormat started', {
+              correlationId: context.correlationId,
+            });
+
+            const mappingContext = {
+              nip: context.nip,
+              correlationId: context.correlationId,
+              gusClassification: context.classification,
+              gusDetailedData: context.gusData,
+              krsData: context.krsData,
+              ceidgData: context.ceidgData,
+            };
+
+            return this.unifiedDataMapper.mapToUnifiedFormat(mappingContext);
+          }),
+        },
+      });
+
+      // Create actor with input (includes config and logger in context)
+      const actor = createActor(configuredMachine, {
+        input: {
+          nip,
+          correlationId,
+          config,
+          logger: this.logger,
+        },
+      });
+      actor.start();
+
+      this.logger.log(`🎯 XState machine started, waiting for completion`, {
+        correlationId,
+      });
+      const result = await this.waitForCompletion(actor, correlationId);
+
+      this.logger.log(`✅ XState orchestration completed successfully`, {
+        nip,
+        correlationId,
+        companyName: result.nazwa,
+        dataSource: result.zrodloDanych,
+        architecture: 'XState-based',
+      });
+
+      return result;
+    } catch (error) {
+      this.logger.error(`Company data orchestration failed`, {
+        nip,
+        correlationId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      // If already BusinessException (from external services), re-throw as-is
+      if (error instanceof BusinessException) {
+        throw error;
+      }
+
+      // If error has ErrorResponse structure (from XState), convert to BusinessException
+      if (this.isErrorResponse(error)) {
+        throw new BusinessException(error);
+      }
+
+      // Unknown errors - convert to standardized format
+      const errorResponse = createErrorResponse({
+        errorCode: 'INTERNAL_SERVER_ERROR',
+        message: error instanceof Error ? error.message : 'Orchestration failed',
+        correlationId,
+        source: 'INTERNAL',
+      });
+
+      throw new BusinessException(errorResponse);
+    }
+  }
+
+  /**
+   * Wait for state machine completion
+   * Timeout is now handled by the state machine itself via 'after' transitions
+   */
+  private async waitForCompletion(
+    actor: {
+      stop: () => void;
+      subscribe: (callback: (snapshot: any) => void) => {
+        unsubscribe: () => void;
+      };
+      getSnapshot: () => any;
+    },
+    correlationId: string,
+  ): Promise<UnifiedCompanyData> {
+    return new Promise((resolve, reject) => {
+      // Subscribe to actor state changes
+      const subscription = actor.subscribe((snapshot: any) => {
+        // XState v5: Wait until machine reaches final state
+        if (snapshot.status !== 'done') {
+          return; // Still processing
+        }
+
+        // Unsubscribe immediately when done
+        subscription.unsubscribe();
+
+        this.logger.debug('State machine completed', {
+          correlationId,
+          finalState: snapshot.value,
+          status: snapshot.status,
+        });
+
+        // Check if success state
+        if (snapshot.value === 'success') {
+          // XState v5: Use output property from final state, fallback to context
+          const output = snapshot.output || snapshot.context?.finalCompanyData;
+          if (!output) {
+            this.logger.error('No data in success state', {
+              correlationId,
+              hasOutput: !!snapshot.output,
+              hasContext: !!snapshot.context,
+              hasFinalCompanyData: !!snapshot.context?.finalCompanyData,
+              contextKeys: snapshot.context ? Object.keys(snapshot.context) : [],
+            });
+
+            const errorResponse = createErrorResponse({
+              errorCode: 'DATA_MAPPING_FAILED',
+              message: 'No data in success state output',
+              correlationId,
+              source: 'INTERNAL',
+            });
+            reject(new BusinessException(errorResponse));
+            return;
+          }
+
+          try {
+            const validatedData = UnifiedCompanyDataSchema.parse(output);
+            resolve(validatedData);
+          } catch (validationError) {
+            const errorResponse = createErrorResponse({
+              errorCode: 'DATA_MAPPING_FAILED',
+              message: 'Failed to validate unified company data',
+              correlationId,
+              source: 'INTERNAL',
+              details: {
+                validationError:
+                  validationError instanceof Error
+                    ? validationError.message
+                    : String(validationError),
+              },
+            });
+            reject(new BusinessException(errorResponse));
+          }
+        } else {
+          // All failure states have error info in output or context
+          // XState v5: output property might not be populated for error states
+          // Fallback to context.lastError which is set by captureSystemError action
+          const errorOutput = snapshot.output || snapshot.context?.lastError;
+
+          if (errorOutput && errorOutput.errorCode) {
+            reject(new BusinessException(errorOutput));
+          } else {
+            // Fallback for unexpected states
+            const errorResponse = createErrorResponse({
+              errorCode: 'ORCHESTRATION_FAILED',
+              message: 'Orchestration failed with unknown error',
+              correlationId,
+              source: 'INTERNAL',
+              details: { finalState: snapshot.value },
+            });
+            reject(new BusinessException(errorResponse));
+          }
+        }
+      });
+    });
+  }
+
+  /**
+   * Check if error has ErrorResponse structure (from XState)
+   */
+  private isErrorResponse(error: unknown): error is ErrorResponse {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'errorCode' in error &&
+      'message' in error &&
+      'correlationId' in error
+    );
+  }
+
+  /**
+   * Health check method to verify external service availability
+   *
+   * Always performs live checks (no caching) to ensure accurate real-time status.
+   * This is critical for:
+   * - Kubernetes/orchestrator health probes and routing decisions
+   * - Operator diagnostics and troubleshooting
+   * - System reliability monitoring
+   *
+   * Checks all services in parallel for faster response.
+   */
+  async healthCheck(): Promise<{
+    status: string;
+    services: Record<string, string>;
+  }> {
+    // Always perform live health checks - no caching
+    this.logger.log('Performing live health checks for all external services');
+
+    const [gusStatus, krsStatus, ceidgStatus] = await Promise.all([
+      this.gusService.checkHealth().catch(() => 'unhealthy' as const),
+      this.krsService.checkHealth().catch(() => 'unhealthy' as const),
+      this.ceidgService.checkHealth().catch(() => 'unhealthy' as const),
+    ]);
+
+    const serviceStatuses: Record<string, string> = {
+      gus: gusStatus,
+      krs: krsStatus,
+      ceidg: ceidgStatus,
+    };
+
+    const allHealthy = Object.values(serviceStatuses).every(
+      (status) => status === 'healthy',
+    );
+
+    const result = {
+      status: allHealthy ? 'healthy' : 'degraded',
+      services: serviceStatuses,
+    };
+
+    this.logger.log('Health check completed', result);
+
+    return result;
+  }
+}

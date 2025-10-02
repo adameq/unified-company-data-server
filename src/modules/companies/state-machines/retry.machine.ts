@@ -1,6 +1,6 @@
-import { createMachine, assign, fromCallback } from 'xstate';
+import { createMachine, assign, fromCallback, fromPromise } from 'xstate';
+import { Logger } from '@nestjs/common';
 import { z } from 'zod';
-import { validateEnvironment } from '@config/environment.schema.js';
 
 /**
  * Retry State Machine for External API Calls
@@ -16,12 +16,17 @@ import { validateEnvironment } from '@config/environment.schema.js';
  */
 
 // Retry context schema for validation
+// Note: Zod v4 has limited function validation - only validates that value is a function
+// TypeScript interface (RetryInput) provides compile-time signature validation
 const RetryContextSchema = z.object({
   service: z.enum(['GUS', 'KRS', 'CEIDG']),
   attempt: z.number().min(0),
   maxRetries: z.number().min(1).max(5),
   initialDelay: z.number().min(50).max(2000),
-  correlationId: z.string().uuid(),
+  correlationId: z.string().min(1),
+  serviceCall: z
+    .function()
+    .describe('Async service function: () => Promise<any>. Runtime signature validation not available in Zod v4.'),
   lastError: z
     .object({
       message: z.string(),
@@ -29,9 +34,16 @@ const RetryContextSchema = z.object({
       timestamp: z.date(),
     })
     .optional(),
+  result: z.any().optional(),
 });
 
 export type RetryContext = z.infer<typeof RetryContextSchema>;
+
+// Input type for retry machine
+export interface RetryInput {
+  serviceCall: () => Promise<any>;
+  correlationId: string;
+}
 
 // Events that the retry machine can receive
 export type RetryEvent =
@@ -42,34 +54,13 @@ export type RetryEvent =
   | { type: 'RESET' };
 
 // Service configuration per external API
-interface ServiceRetryConfig {
+export interface ServiceRetryConfig {
   maxRetries: number;
   initialDelay: number;
 }
 
-const getServiceConfig = (): Record<
-  'GUS' | 'KRS' | 'CEIDG',
-  ServiceRetryConfig
-> => {
-  const env = validateEnvironment();
-  return {
-    GUS: {
-      maxRetries: env.GUS_MAX_RETRIES,
-      initialDelay: env.GUS_INITIAL_DELAY,
-    },
-    KRS: {
-      maxRetries: env.KRS_MAX_RETRIES,
-      initialDelay: env.KRS_INITIAL_DELAY,
-    },
-    CEIDG: {
-      maxRetries: env.CEIDG_MAX_RETRIES,
-      initialDelay: env.CEIDG_INITIAL_DELAY,
-    },
-  };
-};
-
 // Calculate exponential backoff delay with jitter
-const calculateBackoffDelay = (
+export const calculateBackoffDelay = (
   attempt: number,
   initialDelay: number,
   maxDelay = 5000,
@@ -80,14 +71,45 @@ const calculateBackoffDelay = (
   return Math.round(delay);
 };
 
+// Determine if error can be retried based on service type
+function canBeRetriedByService(error: any, serviceType: 'GUS' | 'KRS' | 'CEIDG'): boolean {
+  // Extract error code from various sources
+  const errorCode = error?.code || error?.errorCode;
+  const statusCode = error?.status || error?.statusCode;
+
+  // 404 and ENTITY_NOT_FOUND never retryable
+  if (statusCode === 404 || errorCode === 'ENTITY_NOT_FOUND') {
+    return false;
+  }
+
+  // 400 level errors (except 404) are never retryable
+  if (statusCode >= 400 && statusCode < 500) {
+    return false;
+  }
+
+  if (serviceType === 'GUS') {
+    // GUS: Retry on 5xx AND session errors
+    return (
+      statusCode >= 500 ||
+      errorCode === 'SESSION_EXPIRED' ||
+      errorCode === 'SESSION_ERROR' ||
+      errorCode === 'GUS_SESSION_ERROR'
+    );
+  } else {
+    // KRS/CEIDG: Only 5xx
+    return statusCode >= 500;
+  }
+}
+
 // Create retry machine factory
 export const createRetryMachine = (
   service: 'GUS' | 'KRS' | 'CEIDG',
   correlationId: string,
+  logger: Logger,
+  serviceConfig: ServiceRetryConfig,
 ) => {
-  const serviceConfig = getServiceConfig()[service];
 
-  const initialContext: RetryContext = {
+  const initialContext: Omit<RetryContext, 'serviceCall'> = {
     service,
     attempt: 0,
     maxRetries: serviceConfig.maxRetries,
@@ -99,11 +121,20 @@ export const createRetryMachine = (
     {
       /** @xstate-layout N4IgpgJg5mDOIC5QGMCGA7ArgJ0gSwAsBjAOygFcBjAegBVylsQIBJlrA92w5w20 */
       id: `retry-${service.toLowerCase()}`,
-      context: initialContext,
-      initial: 'idle',
+      // XState v5: context can be function or object - use function to accept input
+      context: ({ input }: { input?: RetryInput }) => ({
+        ...initialContext,
+        serviceCall: input?.serviceCall || (() => Promise.reject(new Error('No service call provided'))),
+        correlationId: input?.correlationId || correlationId,
+      }),
+      types: {} as {
+        context: RetryContext;
+        events: RetryEvent;
+      },
+      initial: 'attempting',
       states: {
         idle: {
-          description: 'Waiting for request to start',
+          description: 'Waiting for request to start (not used when invoked as child)',
           on: {
             REQUEST: {
               target: 'attempting',
@@ -117,30 +148,39 @@ export const createRetryMachine = (
         },
 
         attempting: {
+          entry: ({ context }) => {
+            logger.debug(`Retry machine entering 'attempting' state`, {
+              correlationId: context.correlationId,
+              service: context.service,
+              attempt: context.attempt,
+              maxRetries: context.maxRetries,
+            });
+          },
           description: 'Making the actual API request',
           invoke: {
             id: 'apiRequest',
             src: 'makeApiRequest',
+            input: ({ context }) => ({ context }),
             onDone: {
               target: 'success',
-              actions: ['logSuccess'],
+              actions: ['storeResult', 'logSuccess'],
             },
             onError: [
               {
                 target: 'retrying',
                 guard: 'canRetry',
-                actions: ['incrementAttempt', 'logRetryableError'],
+                actions: ['incrementAttempt', 'storeError', 'logRetryableError'],
               },
               {
                 target: 'failed',
-                actions: ['logFinalFailure'],
+                actions: ['storeError', 'logFinalFailure'],
               },
             ],
           },
           on: {
             SUCCESS: {
               target: 'success',
-              actions: ['logSuccess'],
+              actions: ['storeResult', 'logSuccess'],
             },
             FAILURE: [
               {
@@ -165,6 +205,7 @@ export const createRetryMachine = (
           invoke: {
             id: 'retryDelay',
             src: 'scheduleRetry',
+            input: ({ context }) => context,
             onDone: {
               target: 'attempting',
               actions: ['logRetryAttempt'],
@@ -182,19 +223,32 @@ export const createRetryMachine = (
           description: 'Request completed successfully',
           type: 'final',
           entry: ['logFinalSuccess'],
+          // XState v5: Return the result data so parent can access via event.output
+          output: ({ context }) => context.result,
         },
 
         failed: {
           description: 'Request failed after all retries exhausted',
           type: 'final',
           entry: ['logFinalFailure'],
+          // XState v5: Output error object
+          // The parent fromPromise wrapper will receive this in finalSnapshot and throw it
+          output: ({ context }) => {
+            // Return lastError object (will be thrown by parent)
+            return context.lastError || {
+              message: `${context.service} retry failed`,
+              code: 'RETRY_EXHAUSTED',
+              source: 'INTERNAL',
+              timestamp: new Date(),
+            };
+          },
         },
       },
     },
     {
       actions: {
-        prepareRequest: assign(({ context, event }) => {
-          console.log(
+        prepareRequest: assign(({ context }) => {
+          logger.debug(
             `[${context.correlationId}] Preparing ${context.service} request`,
           );
           return {
@@ -211,15 +265,29 @@ export const createRetryMachine = (
         }),
 
         storeError: assign(({ context, event }) => {
-          const error =
-            'error' in event ? event.error : { message: 'Unknown error' };
+          // XState v5: Error from invoke.onError comes in event.error
+          const error = (event as any).error || { message: 'Unknown error' };
+
+          // Extract error code from various sources (BusinessException, API errors, etc.)
+          const errorCode = error.errorCode || error.code || error.status || undefined;
+
           return {
             ...context,
             lastError: {
-              message: error.message,
-              code: error.code,
+              message: error.message || String(error),
+              code: errorCode,
+              source: error.source, // Preserve source from BusinessException
               timestamp: new Date(),
             },
+          };
+        }),
+
+        storeResult: assign(({ context, event }) => {
+          // XState v5: Result from invoke.onDone comes in event.output
+          const resultData = (event as any).output;
+          return {
+            ...context,
+            result: resultData,
           };
         }),
 
@@ -228,17 +296,18 @@ export const createRetryMachine = (
             ...context,
             attempt: 0,
             lastError: undefined,
+            result: undefined,
           };
         }),
 
         logRequestStart: ({ context }) => {
-          console.log(
+          logger.debug(
             `[${context.correlationId}] Starting ${context.service} request (max retries: ${context.maxRetries})`,
           );
         },
 
         logRetryableError: ({ context }) => {
-          console.warn(
+          logger.warn(
             `[${context.correlationId}] ${context.service} request failed, attempt ${context.attempt}/${context.maxRetries}`,
             {
               error: context.lastError?.message,
@@ -251,25 +320,25 @@ export const createRetryMachine = (
         },
 
         logRetryAttempt: ({ context }) => {
-          console.log(
+          logger.debug(
             `[${context.correlationId}] Retrying ${context.service} request, attempt ${context.attempt + 1}/${context.maxRetries}`,
           );
         },
 
         logSuccess: ({ context }) => {
-          console.log(
+          logger.debug(
             `[${context.correlationId}] ${context.service} request succeeded on attempt ${context.attempt + 1}`,
           );
         },
 
         logFinalSuccess: ({ context }) => {
-          console.log(
+          logger.debug(
             `[${context.correlationId}] ${context.service} retry machine completed successfully`,
           );
         },
 
         logFinalFailure: ({ context }) => {
-          console.error(
+          logger.error(
             `[${context.correlationId}] ${context.service} retry machine failed after ${context.attempt} attempts`,
             {
               lastError: context.lastError,
@@ -281,41 +350,73 @@ export const createRetryMachine = (
 
       guards: {
         canRetry: ({ context }) => {
-          const canRetry = context.attempt < context.maxRetries;
-          console.log(
-            `[${context.correlationId}] Can retry ${context.service}? ${canRetry} (${context.attempt}/${context.maxRetries})`,
-          );
-          return canRetry;
+          const hasAttemptsLeft = context.attempt < context.maxRetries;
+
+          // Check if error can be retried
+          if (context.lastError) {
+            const shouldRetry = canBeRetriedByService(
+              context.lastError,
+              context.service
+            );
+
+            logger.debug(
+              `Can retry ${context.service}?`,
+              {
+                correlationId: context.correlationId,
+                hasAttemptsLeft,
+                attempt: context.attempt,
+                maxRetries: context.maxRetries,
+                shouldRetry,
+                errorCode: context.lastError.code,
+                errorMessage: context.lastError.message,
+              }
+            );
+
+            return hasAttemptsLeft && shouldRetry;
+          }
+
+          return hasAttemptsLeft;
         },
       },
 
       actors: {
-        makeApiRequest: fromCallback(({ sendBack, receive, input }) => {
-          // This will be implemented by the parent machine
-          // The actual API call logic is injected from outside
-          console.log(
-            'API request actor invoked - should be overridden by parent machine',
-          );
+        // Execute the service call function passed from parent machine
+        makeApiRequest: fromPromise(async ({ input }) => {
+          const { context } = input as { context: RetryContext };
 
-          // Simulate async API call
-          const timeout = setTimeout(() => {
-            sendBack({ type: 'SUCCESS', data: 'mock-success' });
-          }, 100);
-
-          return () => {
-            clearTimeout(timeout);
-          };
+          try {
+            const result = await context.serviceCall();
+            return result;
+          } catch (error) {
+            logger.debug(`Service call failed in retry machine`, {
+              correlationId: context?.correlationId || 'unknown',
+              service: context?.service || 'unknown',
+              attempt: context?.attempt ?? 0,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            throw error;
+          }
         }),
 
-        scheduleRetry: fromCallback(({ sendBack, receive, input }) => {
+        scheduleRetry: fromCallback(({ sendBack, input }) => {
           const context = input as RetryContext;
+
+          if (!context) {
+            logger.error('scheduleRetry called with undefined context');
+            return () => {};
+          }
+
           const delay = calculateBackoffDelay(
             context.attempt,
             context.initialDelay,
           );
 
-          console.log(
-            `[${context.correlationId}] Scheduling ${context.service} retry in ${delay}ms`,
+          logger.debug(
+            `Scheduling retry for ${context.service}`,
+            {
+              correlationId: context.correlationId,
+              delayMs: delay
+            }
           );
 
           const timeout = setTimeout(() => {
@@ -335,12 +436,15 @@ export const createRetryMachine = (
 export const RetryMachineUtils = {
   /**
    * Create a retry machine for a specific service
+   * Note: This utility requires a logger and service config - use createRetryMachine directly in production code
    */
   createForService: (
     service: 'GUS' | 'KRS' | 'CEIDG',
     correlationId: string,
+    logger: Logger,
+    serviceConfig: ServiceRetryConfig,
   ) => {
-    return createRetryMachine(service, correlationId);
+    return createRetryMachine(service, correlationId, logger, serviceConfig);
   },
 
   /**

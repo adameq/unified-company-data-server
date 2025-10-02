@@ -21,13 +21,7 @@
     "noImplicitAny": true,
     "strictBindCallApply": true,
     "noFallthroughCasesInSwitch": true,
-    "strict": true,
-    "paths": {
-      "@/*": ["src/*"],
-      "@schemas/*": ["src/schemas/*"],
-      "@config/*": ["src/config/*"],
-      "@modules/*": ["src/modules/*"]
-    }
+    "strict": true
   },
   "include": [
     "src/**/*",

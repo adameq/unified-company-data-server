@@ -1,15 +1,16 @@
 import { z } from 'zod';
 
-export const EnvironmentSchema = z.object({
-  // Server Configuration
-  NODE_ENV: z
-    .enum(['development', 'staging', 'production'])
-    .default('development'),
-  PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+export const EnvironmentSchema = z
+  .object({
+    // Server Configuration
+    NODE_ENV: z
+      .enum(['development', 'staging', 'production'])
+      .default('development'),
+    PORT: z.coerce.number().int().min(1).max(65535).default(3000),
 
   // External API Credentials
-  GUS_USER_KEY: z.string().min(32).describe('GUS SOAP API user key'),
-  CEIDG_JWT_TOKEN: z.string().min(50).describe('CEIDG v3 API JWT token'),
+  GUS_USER_KEY: z.string().min(1).describe('GUS SOAP API user key'),
+  CEIDG_JWT_TOKEN: z.string().min(1).describe('CEIDG v3 API JWT token'),
 
   // API Keys for Authentication
   VALID_API_KEYS: z
@@ -34,20 +35,34 @@ export const EnvironmentSchema = z.object({
 
   // Logging Configuration
   LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
-  LOG_FORMAT: z.enum(['json', 'pretty']).default('json'),
+  LOG_FORMAT: z.enum(['json', 'pretty']).default('pretty'),
 
   // External API Base URLs
+  // WARNING: Development defaults provided for convenience.
+  // Production deployments MUST explicitly set these environment variables
+  // to avoid accidental connections to test/public endpoints.
   GUS_BASE_URL: z
     .string()
     .url()
+    .default('https://wyszukiwarkaregon.stat.gov.pl/wsBIR/UslugaBIRzewnPubl.svc')
+    .describe('GUS SOAP API base URL - MUST be explicitly set in production'),
+  GUS_WSDL_URL: z
+    .string()
+    .url()
     .default(
-      'https://wyszukiwarkaregon.stat.gov.pl/wsBIR/UslugaBIRzewnPubl.svc',
-    ),
-  KRS_BASE_URL: z.string().url().default('https://api-krs.ms.gov.pl'),
+      'https://wyszukiwarkaregon.stat.gov.pl/wsBIR/wsdl/UslugaBIRzewnPubl-ver11-prod.wsdl',
+    )
+    .describe('GUS WSDL definition URL - MUST be explicitly set in production'),
+  KRS_BASE_URL: z
+    .string()
+    .url()
+    .default('https://api-krs.ms.gov.pl')
+    .describe('KRS REST API base URL - MUST be explicitly set in production'),
   CEIDG_BASE_URL: z
     .string()
     .url()
-    .default('https://dane.biznes.gov.pl/api/ceidg/v3'),
+    .default('https://dane.biznes.gov.pl/api/ceidg/v3')
+    .describe('CEIDG v3 REST API base URL - MUST be explicitly set in production'),
 
   // Retry Configuration per Service
   GUS_MAX_RETRIES: z.coerce.number().int().min(0).max(5).default(2),
@@ -65,16 +80,75 @@ export const EnvironmentSchema = z.object({
     .min(1000)
     .max(10000)
     .default(3000),
-});
+
+  // Orchestration Timeouts
+  ORCHESTRATION_TIMEOUT: z.coerce
+    .number()
+    .int()
+    .min(5000)
+    .max(60000)
+    .default(30000)
+    .describe('State machine orchestration timeout in milliseconds'),
+
+  // Swagger Configuration
+  SWAGGER_ENABLED: z.coerce.boolean().default(true),
+  SWAGGER_SERVER_URL_DEVELOPMENT: z
+    .string()
+    .url()
+    .default('http://localhost:3000')
+    .describe('Development server URL for Swagger'),
+  SWAGGER_SERVER_URL_PRODUCTION: z
+    .string()
+    .url()
+    .optional()
+    .describe('Production server URL for Swagger (optional)'),
+
+  // CORS Configuration
+  CORS_ALLOWED_ORIGINS: z
+    .string()
+    .default('http://localhost:3000,http://localhost:5173')
+    .transform((str) => {
+      // Special case: '*' means allow all origins (development only - not recommended)
+      if (str === '*') {
+        return ['*'];
+      }
+      // Parse comma-separated origins and trim whitespace
+      return str.split(',').map((origin) => origin.trim()).filter(Boolean);
+    })
+    .describe('Comma-separated list of allowed CORS origins. Use "*" for all origins (not recommended).'),
+  })
+  .transform((config) => {
+    // Production safety check: fail fast if using default URLs in production
+    if (config.NODE_ENV === 'production') {
+      const usingDefaults: string[] = [];
+
+      if (!process.env.GUS_BASE_URL) usingDefaults.push('GUS_BASE_URL');
+      if (!process.env.GUS_WSDL_URL) usingDefaults.push('GUS_WSDL_URL');
+      if (!process.env.KRS_BASE_URL) usingDefaults.push('KRS_BASE_URL');
+      if (!process.env.CEIDG_BASE_URL) usingDefaults.push('CEIDG_BASE_URL');
+
+      if (usingDefaults.length > 0) {
+        throw new Error(
+          'Production environment detected with default API URLs! ' +
+            'The following environment variables are using default values: ' +
+            usingDefaults.join(', ') +
+            '. This is a security risk. Please explicitly set these variables ' +
+            'in your production environment to avoid unintended API connections.',
+        );
+      }
+
+      // CORS security check for production
+      if (config.CORS_ALLOWED_ORIGINS.includes('*')) {
+        throw new Error(
+          'CORS_ALLOWED_ORIGINS="*" not allowed in production environment. ' +
+            'Allowing all origins creates CSRF vulnerability. ' +
+            'Please set CORS_ALLOWED_ORIGINS to a comma-separated list of allowed domains. ' +
+            'Example: CORS_ALLOWED_ORIGINS=https://yourapp.com,https://api.yourapp.com',
+        );
+      }
+    }
+
+    return config;
+  });
 
 export type Environment = z.infer<typeof EnvironmentSchema>;
-
-// Validation helper
-export function validateEnvironment(): Environment {
-  try {
-    return EnvironmentSchema.parse(process.env);
-  } catch (error) {
-    console.error('❌ Environment validation failed:', (error as any).errors);
-    process.exit(1);
-  }
-}

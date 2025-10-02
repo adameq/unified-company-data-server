@@ -1,6 +1,13 @@
 import { z } from 'zod';
-import { UnifiedCompanyDataSchema } from './unified-company-data.schema.js';
-import { ErrorResponseSchema } from './error-response.schema.js';
+import { UnifiedCompanyDataSchema } from './unified-company-data.schema';
+import type { GusClassificationResponse } from '../modules/external-apis/gus/gus.service';
+import {
+  GusClassificationResponseSchema,
+  GusLegalPersonReportSchema,
+  GusPhysicalPersonReportSchema,
+} from '../modules/external-apis/gus/gus.service';
+import { KrsResponseSchema } from '../modules/external-apis/krs/krs.service';
+import { CeidgCompanySchema } from '../modules/external-apis/ceidg/ceidg-v3.service';
 
 /**
  * Zod schema for internal state management for XState orchestration machine
@@ -87,14 +94,20 @@ export const OrchestrationContextSchema = z
       .regex(/^\d{10}$/, 'Must be exactly 10 digits')
       .describe('Input NIP number'),
 
-    correlationId: z.string().uuid().describe('Request tracking ID (UUID v4)'),
+    correlationId: z.string().min(1).describe('Request tracking ID'),
 
     startTime: z.date().describe('Request start timestamp'),
 
-    // GUS classification data
-    classification: CompanyClassificationSchema.optional().describe(
-      'GUS classification result',
-    ),
+    // GUS classification data (stored as raw GUS response with derived routing flags)
+    classification: GusClassificationResponseSchema.extend({
+      // Add derived routing flags for backwards compatibility
+      silosId: z.string().optional(),
+      requiresKrs: z.boolean().optional(),
+      requiresCeidg: z.boolean().optional(),
+      isDeregistered: z.boolean().optional(),
+    })
+      .optional()
+      .describe('GUS classification result with routing flags'),
 
     // External API responses (raw data for processing)
     krsNumber: z
@@ -103,11 +116,14 @@ export const OrchestrationContextSchema = z
       .optional()
       .describe('KRS number from GUS report'),
 
-    krsData: z.any().optional().describe('Raw KRS API response'),
+    krsData: KrsResponseSchema.optional().describe('Typed KRS API response'),
 
-    ceidgData: z.any().optional().describe('Raw CEIDG API response'),
+    ceidgData: CeidgCompanySchema.optional().describe('Typed CEIDG API response'),
 
-    gusData: z.any().optional().describe('Raw GUS API response'),
+    gusData: z
+      .union([GusLegalPersonReportSchema, GusPhysicalPersonReportSchema])
+      .optional()
+      .describe('Typed GUS detailed report (legal or physical person)'),
 
     // Processing results
     finalCompanyData: UnifiedCompanyDataSchema.optional().describe(
@@ -217,12 +233,12 @@ export const ContextUpdaters = {
 
   addKrsData: (
     context: OrchestrationContext,
-    krsData: any,
+    krsData: z.infer<typeof KrsResponseSchema>,
     responseTimeMs?: number,
   ): OrchestrationContext => {
     return OrchestrationContextSchema.parse({
       ...context,
-      krsData,
+      krsData: krsData,
       timings: responseTimeMs
         ? { ...context.timings, KRS: responseTimeMs }
         : context.timings,
@@ -231,12 +247,12 @@ export const ContextUpdaters = {
 
   addCeidgData: (
     context: OrchestrationContext,
-    ceidgData: any,
+    ceidgData: z.infer<typeof CeidgCompanySchema>,
     responseTimeMs?: number,
   ): OrchestrationContext => {
     return OrchestrationContextSchema.parse({
       ...context,
-      ceidgData,
+      ceidgData: ceidgData,
       timings: responseTimeMs
         ? { ...context.timings, CEIDG: responseTimeMs }
         : context.timings,
@@ -245,12 +261,14 @@ export const ContextUpdaters = {
 
   addGusData: (
     context: OrchestrationContext,
-    gusData: any,
+    gusData:
+      | z.infer<typeof GusLegalPersonReportSchema>
+      | z.infer<typeof GusPhysicalPersonReportSchema>,
     responseTimeMs?: number,
   ): OrchestrationContext => {
     return OrchestrationContextSchema.parse({
       ...context,
-      gusData,
+      gusData: gusData,
       timings: responseTimeMs
         ? { ...context.timings, GUS: responseTimeMs }
         : context.timings,

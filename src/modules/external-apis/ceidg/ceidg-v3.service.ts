@@ -1,12 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
 import { z } from 'zod';
 import {
   createErrorResponse,
   ErrorResponseCreators,
   type ErrorResponse,
-} from '@schemas/error-response.schema.js';
-import { validateEnvironment } from '@config/environment.schema.js';
+} from '../../../schemas/error-response.schema';
+import { type Environment } from '../../../config/environment.schema';
+import { BusinessException } from '../../../common/exceptions/business-exceptions';
 
 /**
  * CEIDG v3 REST Service for Polish Individual Entrepreneurs Registry
@@ -17,6 +19,14 @@ import { validateEnvironment } from '@config/environment.schema.js';
  * - Pagination and response parsing
  * - Rate limiting handling (1000 requests/hour)
  *
+ * Retry Strategy:
+ * - Service-level retry is NOT implemented (methods throw errors directly)
+ * - Retry logic is handled by orchestration.machine.ts using retry.machine.ts
+ * - Configuration: CEIDG_MAX_RETRIES (default 2), CEIDG_INITIAL_DELAY (default 150ms)
+ * - Retries on: 5xx server errors (500, 502, 503)
+ * - No retry on: 404 Not Found, 401 Auth Failed, 429 Rate Limit
+ * - Exponential backoff with jitter managed by retry.machine.ts
+ *
  * Constitutional compliance:
  * - All responses validated with Zod schemas
  * - Defensive programming against API failures
@@ -26,21 +36,31 @@ import { validateEnvironment } from '@config/environment.schema.js';
 
 // CEIDG API response schemas for validation
 const CeidgAddressSchema = z.object({
-  miejscowosc: z.string(),
-  kodPocztowy: z.string().regex(/^\d{2}-\d{3}$/),
+  miasto: z.string(),
+  kod: z.string().regex(/^\d{2}-\d{3}$/),
   ulica: z.string().optional(),
-  nrDomu: z.string().optional(),
-  nrLokalu: z.string().optional(),
+  budynek: z.string().optional(),
+  lokal: z.string().optional(),
   gmina: z.string().optional(),
   powiat: z.string().optional(),
   wojewodztwo: z.string().optional(),
+  kraj: z.string().optional(),
+  terc: z.string().optional(),
+  simc: z.string().optional(),
+  ulic: z.string().optional(),
 });
 
-const CeidgCompanySchema = z.object({
-  nip: z.string().regex(/^\d{10}$/),
-  nazwa: z.string(),
-  imiona: z.string().optional(),
+const CeidgOwnerSchema = z.object({
+  imie: z.string().optional(),
   nazwisko: z.string().optional(),
+  nip: z.string().regex(/^\d{10}$/),
+  regon: z.string().optional(),
+});
+
+export const CeidgCompanySchema = z.object({
+  id: z.string().uuid(),
+  nazwa: z.string(),
+  wlasciciel: CeidgOwnerSchema,
   status: z.enum([
     'AKTYWNY',
     'WYKRESLONY',
@@ -48,14 +68,26 @@ const CeidgCompanySchema = z.object({
     'OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI',
     'WYLACZNIE_W_FORMIE_SPOLKI',
   ]),
-  dataRozpoczeciaDzialalnosci: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  dataZakonczeniaDzialalnosci: z
+  dataRozpoczecia: z
     .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/)
-    .optional(),
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format')
+    .refine(
+      (val) => !isNaN(Date.parse(val)),
+      { message: 'Must be a valid date (e.g., 2023-02-30 is invalid)' }
+    )
+    .describe('Company start date in YYYY-MM-DD format'),
+  dataZakonczenia: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format')
+    .refine(
+      (val) => !isNaN(Date.parse(val)),
+      { message: 'Must be a valid date (e.g., 2023-02-30 is invalid)' }
+    )
+    .optional()
+    .describe('Company end date in YYYY-MM-DD format (if deregistered)'),
   adresDzialalnosci: CeidgAddressSchema,
   adresKorespondencyjny: CeidgAddressSchema.optional(),
-  regon: z.string().optional(),
+  link: z.string().url().optional(),
 });
 
 const CeidgLinksSchema = z.object({
@@ -63,19 +95,24 @@ const CeidgLinksSchema = z.object({
   last: z.string().optional(),
   prev: z.string().optional(),
   next: z.string().optional(),
+  self: z.string().optional(),
 });
 
-const CeidgMetaSchema = z.object({
-  current_page: z.number(),
-  last_page: z.number(),
-  per_page: z.number(),
-  total: z.number(),
-});
+const CeidgPropertiesSchema = z
+  .object({
+    'dc:title': z.string().optional(),
+    'dc:description': z.string().optional(),
+    'dc:language': z.string().optional(),
+    'schema:provider': z.string().optional(),
+    'schema:datePublished': z.string().optional(),
+  })
+  .passthrough();
 
 const CeidgResponseSchema = z.object({
   firmy: z.array(CeidgCompanySchema),
+  count: z.number(),
   links: CeidgLinksSchema,
-  meta: CeidgMetaSchema,
+  properties: CeidgPropertiesSchema.optional(),
 });
 
 // Types inferred from schemas
@@ -95,17 +132,9 @@ interface CeidgConfig {
 }
 
 // Search parameters interface
+// Basic JWT token only supports single NIP lookup without additional filters
 interface CeidgSearchParams {
-  nip: string[];
-  status?: (
-    | 'AKTYWNY'
-    | 'WYKRESLONY'
-    | 'ZAWIESZONY'
-    | 'OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI'
-    | 'WYLACZNIE_W_FORMIE_SPOLKI'
-  )[];
-  page?: number;
-  limit?: number;
+  nip: string; // Single NIP only (basic token doesn't support nip[] arrays)
 }
 
 @Injectable()
@@ -114,19 +143,19 @@ export class CeidgV3Service {
   private readonly config: CeidgConfig;
   private readonly httpClient: AxiosInstance;
 
-  constructor() {
-    const env = validateEnvironment();
+  constructor(
+    private readonly configService: ConfigService<Environment, true>,
+  ) {
     this.config = {
-      baseUrl: env.CEIDG_BASE_URL,
-      jwtToken: env.CEIDG_JWT_TOKEN,
-      timeout: env.EXTERNAL_API_TIMEOUT,
+      baseUrl: this.configService.get('CEIDG_BASE_URL', { infer: true }),
+      jwtToken: this.configService.get('CEIDG_JWT_TOKEN', { infer: true }),
+      timeout: this.configService.get('EXTERNAL_API_TIMEOUT', { infer: true }),
       retryConfig: {
-        maxRetries: env.CEIDG_MAX_RETRIES,
-        initialDelay: env.CEIDG_INITIAL_DELAY,
+        maxRetries: this.configService.get('CEIDG_MAX_RETRIES', { infer: true }),
+        initialDelay: this.configService.get('CEIDG_INITIAL_DELAY', { infer: true }),
       },
     };
 
-    // Configure axios client with JWT authentication
     this.httpClient = axios.create({
       baseURL: this.config.baseUrl,
       timeout: this.config.timeout,
@@ -137,63 +166,64 @@ export class CeidgV3Service {
       },
     });
 
+    // Add request interceptor for debugging
+    this.httpClient.interceptors.request.use(
+      (config) => {
+        const authHeader = config.headers?.Authorization as string;
+        this.logger.debug('CEIDG request interceptor', {
+          url: config.url,
+          baseURL: config.baseURL,
+          params: config.params,
+          authHeaderPresent: !!authHeader,
+          authHeaderFormat: authHeader?.startsWith('Bearer ') ? 'Bearer token' : 'other',
+        });
+        return config;
+      },
+      (error) => Promise.reject(error),
+    );
+
     // Add response interceptor for logging and error handling
     this.httpClient.interceptors.response.use(
       (response) => response,
-      (error) => {
+      (error: unknown) => {
+        const errorObj = error as {
+          response?: { status?: number; statusText?: string };
+          config?: {
+            url?: string;
+            method?: string;
+            headers?: Record<string, unknown>;
+          };
+        };
         this.logger.error('CEIDG API error', {
-          status: error.response?.status,
-          statusText: error.response?.statusText,
-          url: error.config?.url,
-          method: error.config?.method,
-          correlationId: error.config?.headers?.['X-Correlation-ID'],
+          status: errorObj.response?.status,
+          statusText: errorObj.response?.statusText,
+          url: errorObj.config?.url,
+          method: errorObj.config?.method,
+          correlationId: errorObj.config?.headers?.['X-Correlation-ID'],
         });
+        // Preserve original error with response.status for proper error handling
         return Promise.reject(error);
       },
     );
   }
 
+
   /**
-   * Search companies by NIP array
+   * Get company by single NIP
+   * Simplified implementation using direct API call with minimal parameters
    */
-  async searchCompaniesByNip(
-    nips: string[],
+  async getCompanyByNip(
+    nip: string,
     correlationId: string,
-    options: {
-      includeInactive?: boolean;
-      page?: number;
-      limit?: number;
-    } = {},
-  ): Promise<CeidgResponse> {
-    this.logger.log(`Searching CEIDG for NIPs: ${nips.join(', ')}`, {
+  ): Promise<CeidgCompany | null> {
+    this.logger.log(`Getting CEIDG company for NIP: ${nip}`, {
       correlationId,
     });
 
-    // Validate NIPs format
-    for (const nip of nips) {
-      if (!this.isValidNip(nip)) {
-        throw createErrorResponse({
-          errorCode: 'INVALID_NIP_FORMAT',
-          message: `Invalid NIP format: ${nip}. Expected 10 digits.`,
-          correlationId,
-          source: 'INTERNAL',
-        });
-      }
-    }
-
+    // Use minimal parameters - only NIP as string (not array)
+    // Token doesn't support page/per_page/status[] parameters
     const searchParams: CeidgSearchParams = {
-      nip: nips,
-      status: options.includeInactive
-        ? [
-            'AKTYWNY',
-            'WYKRESLONY',
-            'ZAWIESZONY',
-            'OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI',
-            'WYLACZNIE_W_FORMIE_SPOLKI',
-          ]
-        : ['AKTYWNY'],
-      page: options.page || 1,
-      limit: options.limit || 20,
+      nip, // Single NIP as string (not 'nip[]' array)
     };
 
     try {
@@ -203,142 +233,91 @@ export class CeidgV3Service {
         correlationId,
       );
 
-      // Validate response with Zod
-      const validatedData = CeidgResponseSchema.parse(response.data);
-
-      this.logger.log(`CEIDG search completed`, {
+      // DEBUG: Log raw response before validation
+      this.logger.debug(`Raw CEIDG response before validation`, {
         correlationId,
-        nips: nips.join(','),
-        companiesFound: validatedData.firmy.length,
-        totalResults: validatedData.meta.total,
+        responseKeys: Object.keys(response.data),
+        hasFirmy: 'firmy' in response.data,
+        firmyCount: response.data.firmy?.length,
+        firstCompanyKeys: response.data.firmy?.[0] ? Object.keys(response.data.firmy[0]) : [],
+        firstCompanyAdresKeys: response.data.firmy?.[0]?.adresDzialalnosci ? Object.keys(response.data.firmy[0].adresDzialalnosci) : [],
+        rawResponsePreview: JSON.stringify(response.data).substring(0, 500),
       });
 
-      return validatedData;
+      // Validate response with Zod using safeParse
+      const validation = CeidgResponseSchema.safeParse(response.data);
+      if (!validation.success) {
+        this.logger.error(`CEIDG API response failed schema validation`, {
+          correlationId,
+          nip,
+          zodErrors: validation.error.issues,
+          responsePreview: JSON.stringify(response.data).substring(0, 500),
+        });
+
+        const errorResponse = createErrorResponse({
+          errorCode: 'CEIDG_VALIDATION_FAILED',
+          message: 'CEIDG API response failed schema validation',
+          correlationId,
+          source: 'CEIDG',
+          details: {
+            zodErrors: validation.error.issues,
+            nip,
+          },
+        });
+        throw new BusinessException(errorResponse);
+      }
+
+      const validatedData = validation.data;
+
+      this.logger.log(`CEIDG company lookup completed`, {
+        correlationId,
+        nip,
+        companiesFound: validatedData.firmy.length,
+      });
+
+      // Return first company if found, null otherwise
+      return validatedData.firmy.length > 0 ? validatedData.firmy[0] : null;
     } catch (error) {
-      throw this.handleCeidgError(
+      const errorResponse = this.handleCeidgError(
         error,
         correlationId,
-        'searchCompaniesByNip',
-        { nips },
+        'getCompanyByNip',
+        { nips: [nip] },
       );
+      throw new BusinessException(errorResponse);
     }
   }
 
-  /**
-   * Get company by single NIP
-   */
-  async getCompanyByNip(
-    nip: string,
-    correlationId: string,
-  ): Promise<CeidgCompany | null> {
-    const response = await this.searchCompaniesByNip([nip], correlationId, {
-      includeInactive: true, // Include all statuses for complete data
-    });
-
-    // Return first company if found, null otherwise
-    return response.firmy.length > 0 ? response.firmy[0] : null;
-  }
-
-  /**
-   * Check if company exists and is active
-   */
-  async isCompanyActive(nip: string, correlationId: string): Promise<boolean> {
-    try {
-      const company = await this.getCompanyByNip(nip, correlationId);
-      return company?.status === 'AKTYWNY';
-    } catch (error: any) {
-      if (error.errorCode === 'ENTITY_NOT_FOUND') {
-        return false;
-      }
-      // Re-throw other errors (service unavailable, timeout, etc.)
-      throw error;
-    }
-  }
-
-  /**
-   * Get all companies with pagination support
-   */
-  async getAllCompaniesForNips(
-    nips: string[],
-    correlationId: string,
-    options: {
-      includeInactive?: boolean;
-      maxPages?: number;
-    } = {},
-  ): Promise<CeidgCompany[]> {
-    const allCompanies: CeidgCompany[] = [];
-    const maxPages = options.maxPages || 10; // Safety limit
-    let currentPage = 1;
-    let hasMorePages = true;
-
-    while (hasMorePages && currentPage <= maxPages) {
-      const response = await this.searchCompaniesByNip(nips, correlationId, {
-        ...options,
-        page: currentPage,
-      });
-
-      allCompanies.push(...response.firmy);
-
-      hasMorePages = currentPage < response.meta.last_page;
-      currentPage++;
-
-      this.logger.debug(
-        `Fetched page ${currentPage - 1}/${response.meta.last_page}`,
-        {
-          correlationId,
-          companiesInPage: response.firmy.length,
-          totalSoFar: allCompanies.length,
-        },
-      );
-    }
-
-    return allCompanies;
-  }
 
   /**
    * Make HTTP request to CEIDG API
+   * Simplified for basic JWT token - only single NIP parameter supported
    */
   private async makeCeidgRequest(
     endpoint: string,
     params: CeidgSearchParams,
     correlationId: string,
   ): Promise<AxiosResponse> {
-    // Build query parameters
-    const queryParams = new URLSearchParams();
-
-    // Add NIP array parameters
-    params.nip.forEach((nip) => {
-      queryParams.append('nip[]', nip);
-    });
-
-    // Add status array parameters
-    if (params.status) {
-      params.status.forEach((status) => {
-        queryParams.append('status[]', status);
-      });
-    }
-
-    // Add pagination parameters
-    if (params.page) {
-      queryParams.append('page', params.page.toString());
-    }
-    if (params.limit) {
-      queryParams.append('per_page', params.limit.toString());
-    }
-
-    const fullUrl = `${endpoint}?${queryParams.toString()}`;
+    // Basic JWT token only supports single NIP parameter
+    // No arrays (nip[]), no status filters (status[]), no pagination
+    const axiosParams: Record<string, unknown> = {
+      nip: params.nip, // Single NIP as simple parameter
+    };
 
     this.logger.debug(`Making CEIDG request`, {
-      endpoint: fullUrl,
+      endpoint,
       correlationId,
-      nipsCount: params.nip.length,
+      nip: params.nip,
+      axiosParams, // Log exact params being sent
+      authorizationHeader: `Bearer ${this.config.jwtToken.substring(0, 30)}...`, // Log first 30 chars
+      fullTokenLength: this.config.jwtToken.length,
     });
 
     try {
       const startTime = Date.now();
 
       const response = await this.httpClient.get(endpoint, {
-        params: Object.fromEntries(queryParams),
+        params: axiosParams,
         headers: {
           'X-Correlation-ID': correlationId,
         },
@@ -350,16 +329,21 @@ export class CeidgV3Service {
         status: response.status,
         responseTime,
         correlationId,
-        resultCount: response.data?.firmy?.length || 0,
+        resultCount:
+          (response.data as { firmy?: unknown[] })?.firmy?.length || 0,
       });
 
       return response;
-    } catch (error: any) {
+    } catch (error: unknown) {
       const responseTime = Date.now();
+      const errorObj = error as {
+        message?: string;
+        response?: { status?: number };
+      };
       this.logger.error(`CEIDG request failed`, {
         endpoint,
-        error: error.message,
-        status: error.response?.status,
+        error: errorObj.message,
+        status: errorObj.response?.status,
         correlationId,
         responseTime,
       });
@@ -369,24 +353,31 @@ export class CeidgV3Service {
   }
 
   /**
-   * Validate NIP format (10 digits)
-   */
-  private isValidNip(nip: string): boolean {
-    return /^\d{10}$/.test(nip);
-  }
-
-  /**
    * Handle CEIDG-specific errors and convert to standardized ErrorResponse
    */
   private handleCeidgError(
-    error: any,
+    error: unknown,
     correlationId: string,
     operation: string,
     context: { nips?: string[] } = {},
   ): ErrorResponse {
+    const errorObj = error as {
+      response?: {
+        status?: number;
+        statusText?: string;
+        headers?: Record<string, string>;
+        data?: { message?: string };
+      };
+      message?: string;
+      code?: string;
+      name?: string;
+      errors?: unknown[];
+    };
+
     // HTTP status-based error handling
-    if (error.response?.status) {
-      const status = error.response.status;
+    if (errorObj.response?.status) {
+      const status = errorObj.response.status;
+      let retryAfter: string;
 
       switch (status) {
         case 401:
@@ -418,7 +409,7 @@ export class CeidgV3Service {
           });
 
         case 429:
-          const retryAfter = error.response.headers['retry-after'] || '3600'; // Default 1 hour
+          retryAfter = errorObj.response.headers?.['retry-after'] || '3600'; // Default 1 hour
           return createErrorResponse({
             errorCode: 'CEIDG_RATE_LIMIT',
             message: `CEIDG rate limit exceeded. Retry after ${retryAfter} seconds.`,
@@ -426,7 +417,7 @@ export class CeidgV3Service {
             source: 'CEIDG',
             details: {
               operation,
-              retryAfter: parseInt(retryAfter, 10),
+              retryAfter: parseInt(String(retryAfter), 10),
               nips: context.nips,
             },
           });
@@ -438,14 +429,14 @@ export class CeidgV3Service {
             correlationId,
             'CEIDG',
             new Error(
-              `CEIDG API returned ${status}: ${error.response.statusText}`,
+              `CEIDG API returned ${status}: ${errorObj.response.statusText}`,
             ),
           );
 
         case 400:
           return createErrorResponse({
             errorCode: 'INVALID_REQUEST_FORMAT',
-            message: `Invalid request format for CEIDG API: ${error.response.data?.message || 'Bad request'}`,
+            message: `Invalid request format for CEIDG API: ${errorObj.response.data?.message || 'Bad request'}`,
             correlationId,
             source: 'CEIDG',
             details: { operation, status, nips: context.nips },
@@ -462,44 +453,32 @@ export class CeidgV3Service {
       }
     }
 
-    // JWT token expiration (specific error message checking)
-    if (
-      error.message?.toLowerCase().includes('jwt') &&
-      (error.message?.toLowerCase().includes('expired') ||
-        error.message?.toLowerCase().includes('invalid'))
-    ) {
-      return createErrorResponse({
-        errorCode: 'CEIDG_JWT_EXPIRED',
-        message: 'CEIDG JWT token has expired or is invalid',
-        correlationId,
-        source: 'CEIDG',
-        details: { operation, nips: context.nips },
-      });
-    }
-
     // Timeout errors
-    if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+    if (
+      errorObj.code === 'ECONNABORTED' ||
+      (errorObj.message && errorObj.message.includes('timeout'))
+    ) {
       return ErrorResponseCreators.timeoutError(correlationId, 'CEIDG');
     }
 
     // Network/connection errors
-    if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+    if (errorObj.code === 'ECONNREFUSED' || errorObj.code === 'ENOTFOUND') {
       return createErrorResponse({
         errorCode: 'CEIDG_SERVICE_UNAVAILABLE',
         message: 'Cannot connect to CEIDG service',
         correlationId,
         source: 'CEIDG',
         details: {
-          errorCode: error.code,
+          errorCode: errorObj.code,
           operation,
           nips: context.nips,
-          originalError: error.message,
+          originalError: errorObj.message,
         },
       });
     }
 
     // Zod validation errors (invalid response format)
-    if (error.name === 'ZodError') {
+    if (errorObj.name === 'ZodError') {
       return createErrorResponse({
         errorCode: 'DATA_MAPPING_FAILED',
         message: 'CEIDG response format validation failed',
@@ -508,7 +487,7 @@ export class CeidgV3Service {
         details: {
           operation,
           nips: context.nips,
-          validationErrors: error.errors,
+          validationErrors: errorObj.errors,
         },
       });
     }
@@ -522,9 +501,42 @@ export class CeidgV3Service {
       details: {
         operation,
         nips: context.nips,
-        originalError: error.message,
+        originalError: errorObj.message,
       },
     });
+  }
+
+  /**
+   * Health check - lightweight API availability test
+   *
+   * We accept 200, 400, 401, and 405 status codes as "healthy" -
+   * what matters is that the service responded (not network timeout/connection error).
+   * 401 means authentication required but service is available.
+   * 405 Method Not Allowed also means service is responding.
+   */
+  async checkHealth(): Promise<'healthy' | 'unhealthy'> {
+    try {
+      // GET request with minimal invalid NIP to check API availability
+      // We expect 400/401 response which means service is alive
+      const response = await this.httpClient.get('/firmy', {
+        params: { nip: '0' }, // Invalid NIP to trigger quick 400 response
+        timeout: 5000,
+        validateStatus: (status) =>
+          status === 200 || status === 400 || status === 401 || status === 405,
+      });
+
+      this.logger.log('CEIDG health check passed', {
+        status: response.status,
+      });
+
+      return 'healthy';
+    } catch (error) {
+      this.logger.warn('CEIDG health check failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      return 'unhealthy';
+    }
   }
 }
 
@@ -534,27 +546,31 @@ export const CeidgMappers = {
    * Map CEIDG company to unified format
    */
   mapToUnifiedData: (ceidgCompany: CeidgCompany) => {
+    // Firma aktywna tylko gdy status AKTYWNY i brak daty zakończenia
+    const isActive =
+      ceidgCompany.status === 'AKTYWNY' && !ceidgCompany.dataZakonczenia;
+
     return {
       nazwa:
-        ceidgCompany.imiona && ceidgCompany.nazwisko
-          ? `${ceidgCompany.imiona} ${ceidgCompany.nazwisko}`
+        ceidgCompany.wlasciciel.imie && ceidgCompany.wlasciciel.nazwisko
+          ? `${ceidgCompany.wlasciciel.imie} ${ceidgCompany.wlasciciel.nazwisko}`
           : ceidgCompany.nazwa,
-      nip: ceidgCompany.nip,
-      regon: ceidgCompany.regon,
+      nip: ceidgCompany.wlasciciel.nip,
+      regon: ceidgCompany.wlasciciel.regon,
       adres: {
-        miejscowosc: ceidgCompany.adresDzialalnosci.miejscowosc,
-        kodPocztowy: ceidgCompany.adresDzialalnosci.kodPocztowy,
+        miejscowosc: ceidgCompany.adresDzialalnosci.miasto,
+        kodPocztowy: ceidgCompany.adresDzialalnosci.kod,
         ulica: ceidgCompany.adresDzialalnosci.ulica,
-        numerBudynku: ceidgCompany.adresDzialalnosci.nrDomu,
-        numerLokalu: ceidgCompany.adresDzialalnosci.nrLokalu,
+        numerBudynku: ceidgCompany.adresDzialalnosci.budynek,
+        numerLokalu: ceidgCompany.adresDzialalnosci.lokal,
         wojewodztwo: ceidgCompany.adresDzialalnosci.wojewodztwo,
         powiat: ceidgCompany.adresDzialalnosci.powiat,
         gmina: ceidgCompany.adresDzialalnosci.gmina,
       },
       status: ceidgCompany.status,
-      isActive: ceidgCompany.status === 'AKTYWNY',
-      dataRozpoczeciaDzialalnosci: ceidgCompany.dataRozpoczeciaDzialalnosci,
-      dataZakonczeniaDzialalnosci: ceidgCompany.dataZakonczeniaDzialalnosci,
+      isActive: isActive,
+      dataRozpoczeciaDzialalnosci: ceidgCompany.dataRozpoczecia,
+      dataZakonczeniaDzialalnosci: ceidgCompany.dataZakonczenia,
       typPodmiotu: 'FIZYCZNA' as const,
       formaPrawna: 'DZIAŁALNOŚĆ GOSPODARCZA' as const,
       zrodloDanych: 'CEIDG' as const,
@@ -565,7 +581,7 @@ export const CeidgMappers = {
    * Check if company is deregistered
    */
   isDeregistered: (company: CeidgCompany): boolean => {
-    return company.status === 'WYKRESLONY';
+    return !!company.dataZakonczenia || company.status === 'WYKRESLONY';
   },
 
   /**
