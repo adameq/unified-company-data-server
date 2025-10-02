@@ -5,7 +5,6 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { Environment } from './config/environment.schema';
-import { ValidationException } from './common/exceptions/validation.exception';
 
 async function bootstrap() {
   // Environment validation is now handled by ConfigModule.forRoot({ validate })
@@ -76,16 +75,12 @@ async function bootstrap() {
       stopAtFirstError: false, // Collect all validation errors
       forbidUnknownValues: true,
       validateCustomDecorators: true,
-      exceptionFactory: (errors) => {
-        // Use custom ValidationException for structured error handling
-        // This provides type-safe error structure and automatic error code determination
-        // GlobalExceptionFilter will extract correlationId from request and call toErrorResponse()
-        return new ValidationException(errors);
-      },
+      // No custom exceptionFactory - use default BadRequestException
+      // GlobalExceptionFilter handles validation errors automatically
     }),
   );
 
-  // Note: ValidationExceptionFilter is registered in AppModule as APP_FILTER
+  // Note: GlobalExceptionFilter is registered in AppModule as APP_FILTER
   // This ensures it works in both production and tests
 
   // Swagger configuration

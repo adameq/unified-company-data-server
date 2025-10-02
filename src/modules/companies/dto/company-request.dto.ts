@@ -7,7 +7,7 @@ import { IsString, Matches, IsNotEmpty } from 'class-validator';
  * Validation strategy:
  * - Uses class-validator decorators for validation
  * - Validated by ValidationPipe in main.ts
- * - Errors transformed by ValidationExceptionFilter to ErrorResponse format
+ * - Errors transformed by GlobalExceptionFilter to ErrorResponse format
  */
 export class CompanyRequestDto {
   @ApiProperty({

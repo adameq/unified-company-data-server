@@ -3,7 +3,6 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 const request = require('supertest');
 import { AppModule } from '../../src/app.module';
 import { TEST_NIPS, getTestApiKey } from '../fixtures/test-nips';
-import { ValidationException } from '../../src/common/exceptions/validation.exception';
 
 /**
  * T012: Integration test for error scenarios
@@ -31,7 +30,7 @@ describe('Integration Tests - Error Scenarios', () => {
 
     app = moduleFixture.createNestApplication();
 
-    // Enable ValidationPipe with exceptionFactory like in main.ts
+    // Enable ValidationPipe like in main.ts
     app.useGlobalPipes(
       new ValidationPipe({
         whitelist: true,
@@ -40,9 +39,8 @@ describe('Integration Tests - Error Scenarios', () => {
         stopAtFirstError: false,
         forbidUnknownValues: true,
         validateCustomDecorators: true,
-        exceptionFactory: (errors) => {
-          return new ValidationException(errors);
-        },
+        // No custom exceptionFactory - use default BadRequestException
+        // GlobalExceptionFilter handles validation errors automatically
       }),
     );
 

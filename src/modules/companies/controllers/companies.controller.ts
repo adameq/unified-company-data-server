@@ -31,7 +31,7 @@ import { CorrelationId } from '../../common/decorators/correlation-id.decorator'
  * - All exceptions are handled by GlobalExceptionFilter
  * - No try-catch needed in controller (single responsibility principle)
  * - BusinessException from services propagates to filter automatically
- * - ValidationPipe errors are caught by ValidationExceptionFilter
+ * - ValidationPipe errors (BadRequestException) are caught by GlobalExceptionFilter
  */
 
 @ApiTags('companies')
@@ -127,7 +127,7 @@ The service follows a constitutional programming approach:
     });
 
     // Request body is already validated by ValidationPipe + DTO
-    // No manual validation needed - ValidationExceptionFilter handles format
+    // No manual validation needed - GlobalExceptionFilter handles all errors
 
     // Delegate to orchestration service
     // All errors are handled by GlobalExceptionFilter

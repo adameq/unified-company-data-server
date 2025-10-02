@@ -16,7 +16,6 @@ import {
   ERROR_CODES,
 } from '../../../schemas/error-response.schema';
 import { BusinessException } from '../../../common/exceptions/business-exceptions';
-import { ValidationException } from '../../../common/exceptions/validation.exception';
 import {
   extractFromRequest,
   generateCorrelationId,
@@ -166,13 +165,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       return exception.toErrorResponse();
     }
 
-    // Handle ValidationException (from ValidationPipe)
-    // This provides type-safe, structured validation error handling
-    if (exception instanceof ValidationException) {
-      return exception.toErrorResponse(correlationId);
-    }
-
-    // Handle HttpException (includes NestJS built-in exceptions)
+    // Handle HttpException (includes NestJS built-in exceptions and ValidationPipe errors)
     if (exception instanceof HttpException) {
       const response = exception.getResponse();
 
@@ -210,14 +203,30 @@ export class GlobalExceptionFilter implements ExceptionFilter {
   /**
    * Convert HttpException to ErrorResponse
    *
-   * Note: ValidationPipe errors are now handled by ValidationException
-   * This method only handles other HttpException instances
+   * Handles both standard HttpExceptions and ValidationPipe errors.
+   * ValidationPipe errors have response.message as array of validation messages.
    */
   private httpExceptionToErrorResponse(
     exception: HttpException,
     correlationId: string,
   ): ErrorResponse {
     const status = exception.getStatus();
+    const response = exception.getResponse();
+
+    // Check if this is a ValidationPipe error (response.message is array)
+    if (
+      typeof response === 'object' &&
+      response &&
+      'message' in response &&
+      Array.isArray(response.message) &&
+      status === 400
+    ) {
+      return this.validationErrorToErrorResponse(
+        response.message,
+        correlationId,
+      );
+    }
+
     const message = exception.message;
 
     // Map common HTTP status codes to error codes
@@ -247,6 +256,99 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         originalMessage: message,
       },
     });
+  }
+
+  /**
+   * Convert ValidationPipe errors to ErrorResponse
+   *
+   * Analyzes validation error messages to determine appropriate error code
+   * and creates user-friendly messages.
+   */
+  private validationErrorToErrorResponse(
+    validationMessages: string[],
+    correlationId: string,
+  ): ErrorResponse {
+    // Determine error code based on validation messages
+    const errorCode = this.determineValidationErrorCode(validationMessages);
+
+    // Create user-friendly message
+    const message = this.createValidationMessage(errorCode, validationMessages);
+
+    return createErrorResponse({
+      errorCode,
+      message,
+      correlationId,
+      source: 'INTERNAL',
+      details: {
+        validationErrors: validationMessages,
+      },
+    });
+  }
+
+  /**
+   * Analyze validation messages to determine appropriate ErrorCode
+   */
+  private determineValidationErrorCode(messages: string[]): ErrorCode {
+    // Check if any message is related to 'nip' field
+    const hasNipError = messages.some((msg) =>
+      msg.toLowerCase().includes('nip'),
+    );
+
+    if (hasNipError) {
+      return 'INVALID_NIP_FORMAT';
+    }
+
+    // Check if any message indicates missing/required field
+    const hasMissingField = messages.some((msg) => {
+      const lowerMsg = msg.toLowerCase();
+      return (
+        lowerMsg.includes('required') ||
+        lowerMsg.includes('should not be empty') ||
+        lowerMsg.includes('must be a string') ||
+        lowerMsg.includes('must be defined')
+      );
+    });
+
+    if (hasMissingField) {
+      return 'MISSING_REQUIRED_FIELDS';
+    }
+
+    // Default for other validation errors
+    return 'INVALID_REQUEST_FORMAT';
+  }
+
+  /**
+   * Create user-friendly message based on error code and validation messages
+   */
+  private createValidationMessage(
+    errorCode: ErrorCode,
+    messages: string[],
+  ): string {
+    switch (errorCode) {
+      case 'INVALID_NIP_FORMAT':
+        return 'Invalid NIP format. Expected exactly 10 digits.';
+
+      case 'MISSING_REQUIRED_FIELDS':
+        return 'Required fields are missing from the request.';
+
+      case 'INVALID_REQUEST_FORMAT':
+        // Extract field names from validation messages
+        const fieldMatches = messages.map((msg) => {
+          // Try to extract field name from messages like "property fieldName should not exist"
+          const match = msg.match(/property (\w+)/);
+          return match ? match[1] : null;
+        }).filter((field): field is string => field !== null);
+
+        if (fieldMatches.length > 0) {
+          const fields = fieldMatches.join(', ');
+          return `Invalid request format. Check fields: ${fields}`;
+        }
+
+        return 'Invalid request format.';
+
+      default:
+        return 'Validation failed.';
+    }
   }
 
   /**
