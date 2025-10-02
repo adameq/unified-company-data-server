@@ -10,6 +10,9 @@ import {
 } from '../../../schemas/error-response.schema';
 import { type Environment } from '../../../config/environment.schema';
 import { BusinessException } from '../../../common/exceptions/business-exceptions';
+import { GusSessionManager } from './gus-session.manager';
+import { GusRequestInterceptor } from './gus-request.interceptor';
+import { GusSession, GusConfig } from './interfaces/gus-session.interface';
 
 /**
  * GUS SOAP Service for Polish Statistical Office API
@@ -90,39 +93,6 @@ export const GusPhysicalPersonReportSchema = z.object({
   fiz_adSiedzUlica_Nazwa: z.string().optional(),
 });
 
-/**
- * Zaloguj (Login) response schema
- *
- * Background:
- * - GUS WSDL defines Zaloguj operation to return a string sessionId
- * - WSDL: https://wyszukiwarkaregon.stat.gov.pl/wsBIR/wsdl/UslugaBIRzewnPubl-ver11-prod.wsdl
- *
- * Response Structure:
- * The strong-soap library may return the sessionId in two formats:
- * 1. Direct string - when strong-soap unwraps single-value SOAP responses
- * 2. Object {ZalogujResult: string} - standard WSDL response structure
- *
- * Previous Implementation:
- * - Used defensive extraction trying 6+ different paths (ZalogujResult, zalogujresult, etc.)
- * - This was overly complex and indicated uncertainty about API contract
- *
- * Current Implementation:
- * - Uses Zod validation for type safety
- * - Supports only the two canonical response structures from strong-soap
- * - Logs response type for monitoring API behavior
- * - Fails fast with detailed error if unexpected structure is received
- *
- * Monitoring:
- * - Check logs for "responseType" field to track which format is used
- * - If validation fails, review zodErrors in logs to understand API changes
- */
-export const ZalogujResponseSchema = z.union([
-  z.string().min(20).describe('Session ID returned directly as string'),
-  z.object({
-    ZalogujResult: z.string().min(20).describe('Session ID in standard WSDL response object'),
-  }).describe('Standard WSDL response with ZalogujResult field'),
-]);
-
 // Types inferred from schemas
 export type GusClassificationResponse = z.infer<
   typeof GusClassificationResponseSchema
@@ -131,42 +101,28 @@ export type GusLegalPersonReport = z.infer<typeof GusLegalPersonReportSchema>;
 export type GusPhysicalPersonReport = z.infer<
   typeof GusPhysicalPersonReportSchema
 >;
-export type ZalogujResponse = z.infer<typeof ZalogujResponseSchema>;
-
-// GUS service configuration
-interface GusConfig {
-  baseUrl: string;
-  wsdlUrl: string;
-  userKey: string;
-  timeout: number;
-  sessionTimeoutMs: number;
-}
-
-// Session management
-interface GusSession {
-  sessionId: string;
-  expiresAt: Date;
-  client: soap.Client;
-}
 
 @Injectable()
 export class GusService {
   private readonly logger = new Logger(GusService.name);
   private readonly config: GusConfig;
-  private currentSession: GusSession | null = null;
-
-  // Session refresh locking to prevent race conditions
-  private isRefreshing: boolean = false;
-  private refreshPromise: Promise<soap.Client> | null = null;
+  private readonly sessionManager: GusSessionManager;
+  private readonly requestInterceptor: GusRequestInterceptor;
 
   constructor(private readonly configService: ConfigService<Environment, true>) {
     this.config = {
       baseUrl: this.configService.get('GUS_BASE_URL', { infer: true }),
       wsdlUrl: this.configService.get('GUS_WSDL_URL', { infer: true }),
       userKey: this.configService.get('GUS_USER_KEY', { infer: true }),
-      timeout: this.configService.get('EXTERNAL_API_TIMEOUT', { infer: true }),
       sessionTimeoutMs: 30 * 60 * 1000, // 30 minutes
     };
+
+    // Initialize session manager and request interceptor
+    this.sessionManager = new GusSessionManager(this.config);
+    this.requestInterceptor = new GusRequestInterceptor(
+      this.sessionManager,
+      this.config,
+    );
   }
 
 
@@ -182,41 +138,20 @@ export class GusService {
     });
 
     try {
-      // Ensure we have a valid session
-      await this.getAuthenticatedClient(correlationId);
+      // Get active session (will be created if expired)
+      const session = await this.sessionManager.getSession(correlationId);
 
-      if (!this.currentSession) {
-        throw new BusinessException({
-          errorCode: 'INTERNAL_SERVER_ERROR',
-          message: 'Internal error: No valid GUS session for classification request',
-          correlationId,
-          source: 'INTERNAL',
-        });
-      }
+      // Attach interceptor to add headers automatically
+      this.requestInterceptor.attach(session.client, 'DaneSzukajPodmioty');
 
       // Normalize NIP (remove spaces)
       const cleanNip = nip.replace(/\s+/g, '').trim();
-
-      // Add WS-Addressing headers for DaneSzukajPodmioty operation
-      this.addWSAddressingHeaders(
-        this.currentSession.client,
-        'http://CIS/BIR/PUBL/2014/07/IUslugaBIRzewnPubl/DaneSzukajPodmioty'
-      );
-
-      // CRITICAL: Re-add sid header before each operation (strong-soap may clear it)
-      this.currentSession.client.clearHttpHeaders();
-      this.currentSession.client.addHttpHeader('sid', this.currentSession.sessionId);
-
-      this.logger.debug('Re-added sid header before DaneSzukajPodmioty', {
-        sessionId: this.currentSession.sessionId.substring(0, 8) + '...',
-        correlationId,
-      });
 
       // Add small delay to avoid GUS rate limiting (required by GUS server)
       await new Promise(resolve => setTimeout(resolve, 100));
 
       // Call DaneSzukajPodmioty operation using strong-soap
-      // Simple flat structure - strong-soap will handle namespaces via WSDL
+      // Headers (sid, WS-Addressing) are added automatically by GusRequestInterceptor
       const searchParams = {
         pParametryWyszukiwania: {
           Nip: cleanNip,
@@ -228,24 +163,15 @@ export class GusService {
         correlationId,
       });
 
-      if (!this.currentSession?.client) {
-        throw new BusinessException({
-          errorCode: 'INTERNAL_SERVER_ERROR',
-          message: 'Internal error: GUS session not initialized',
-          correlationId,
-          source: 'INTERNAL',
-        });
-      }
-
       const { result, envelope } = await new Promise<{ result: any; envelope: any }>(
         (resolve, reject) => {
-          this.currentSession!.client.DaneSzukajPodmioty(
+          session.client.DaneSzukajPodmioty(
             searchParams,
             (err: Error | null, result: any, envelope: any) => {
               // Log actual SOAP request for debugging
-              if (this.currentSession?.client.lastRequest) {
+              if (session.client.lastRequest) {
                 this.logger.debug('DaneSzukajPodmioty SOAP Request', {
-                  request: this.currentSession.client.lastRequest.substring(0, 1000),
+                  request: session.client.lastRequest.substring(0, 1000),
                   correlationId,
                 });
               }
@@ -393,17 +319,11 @@ export class GusService {
     );
 
     try {
-      // Ensure we have a valid session
-      await this.getAuthenticatedClient(correlationId);
+      // Get active session (will be created if expired)
+      const session = await this.sessionManager.getSession(correlationId);
 
-      if (!this.currentSession) {
-        throw new BusinessException({
-          errorCode: 'INTERNAL_SERVER_ERROR',
-          message: 'Internal error: No valid GUS session for detailed report request',
-          correlationId,
-          source: 'INTERNAL',
-        });
-      }
+      // Attach interceptor to add headers automatically
+      this.requestInterceptor.attach(session.client, 'DanePobierzPelnyRaport');
 
       // Validate and normalize REGON
       const cleanRegon = regon.replace(/\s+/g, '').trim();
@@ -418,16 +338,11 @@ export class GusService {
 
       const reportName = this.getReportNameBySilosId(silosId, correlationId);
 
-      // Add WS-Addressing headers for DanePobierzPelnyRaport operation
-      this.addWSAddressingHeaders(
-        this.currentSession.client,
-        'http://CIS/BIR/PUBL/2014/07/IUslugaBIRzewnPubl/DanePobierzPelnyRaport'
-      );
-
       // Add small delay to avoid GUS rate limiting (required by GUS server)
       await new Promise(resolve => setTimeout(resolve, 100));
 
       // Call DanePobierzPelnyRaport operation using strong-soap
+      // Headers (sid, WS-Addressing) are added automatically by GusRequestInterceptor
       const reportParams = {
         pRegon: cleanRegon,
         pNazwaRaportu: reportName,
@@ -439,24 +354,15 @@ export class GusService {
         correlationId,
       });
 
-      if (!this.currentSession?.client) {
-        throw new BusinessException({
-          errorCode: 'INTERNAL_SERVER_ERROR',
-          message: 'Internal error: GUS session not initialized',
-          correlationId,
-          source: 'INTERNAL',
-        });
-      }
-
       const { result } = await new Promise<{ result: any; envelope: any }>(
         (resolve, reject) => {
-          this.currentSession!.client.DanePobierzPelnyRaport(
+          session.client.DanePobierzPelnyRaport(
             reportParams,
             (err: Error | null, result: any, envelope: any) => {
               // Log actual SOAP request for debugging
-              if (this.currentSession?.client.lastRequest) {
+              if (session.client.lastRequest) {
                 this.logger.debug('DanePobierzPelnyRaport SOAP Request', {
-                  request: this.currentSession.client.lastRequest.substring(0, 1000),
+                  request: session.client.lastRequest.substring(0, 1000),
                   correlationId,
                 });
               }
@@ -590,306 +496,13 @@ export class GusService {
   }
 
   /**
-   * Get authenticated SOAP client with session management
-   *
-   * Race condition protection:
-   * - Uses isRefreshing flag to prevent concurrent session creation
-   * - Queues concurrent requests to wait for ongoing session refresh
-   * - Only one request creates new session, others reuse the same promise
-   */
-  private async getAuthenticatedClient(
-    correlationId: string,
-  ): Promise<soap.Client> {
-    // Check if current session is valid
-    if (this.currentSession && new Date() < this.currentSession.expiresAt) {
-      return this.currentSession.client;
-    }
-
-    // If session refresh is already in progress, wait for it
-    if (this.isRefreshing && this.refreshPromise) {
-      this.logger.debug('Session refresh already in progress, waiting...', { correlationId });
-      return this.refreshPromise;
-    }
-
-    // Start new session refresh with locking
-    this.isRefreshing = true;
-    this.refreshPromise = this.createNewSession(correlationId)
-      .then((client) => {
-        this.isRefreshing = false;
-        this.refreshPromise = null;
-        return client;
-      })
-      .catch((error) => {
-        this.isRefreshing = false;
-        this.refreshPromise = null;
-        throw error;
-      });
-
-    return this.refreshPromise;
-  }
-
-  /**
-   * Add WS-Addressing headers required by GUS API
-   * Based on official GUS documentation (BIR11_Przyklady.pdf, page 5)
-   *
-   * Required format:
-   * <soap:Header xmlns:wsa="http://www.w3.org/2005/08/addressing">
-   *   <wsa:To>endpoint</wsa:To>
-   *   <wsa:Action>action</wsa:Action>
-   * </soap:Header>
-   *
-   * Uses strong-soap's addSoapHeader() with XML string (recommended approach per Issue #84)
-   * IMPORTANT: Each header element must be added separately (not as multi-element string)
-   */
-  private addWSAddressingHeaders(client: soap.Client, action: string): void {
-    this.logger.debug('Adding WS-Addressing headers via addSoapHeader()', {
-      action,
-      to: this.config.baseUrl,
-    });
-
-    // Clear any existing SOAP headers
-    client.clearSoapHeaders();
-
-    // Add WS-Addressing headers as separate XML strings
-    // This approach is recommended by strong-soap community (see GitHub Issue #84)
-    // CRITICAL: Each header must be added separately to avoid XML parsing errors
-    const wsaNamespace = 'http://www.w3.org/2005/08/addressing';
-
-    // XML string overload now properly typed in strong-soap.d.ts
-    client.addSoapHeader(`<wsa:To xmlns:wsa="${wsaNamespace}">${this.config.baseUrl}</wsa:To>`);
-    client.addSoapHeader(`<wsa:Action xmlns:wsa="${wsaNamespace}">${action}</wsa:Action>`);
-
-    this.logger.debug('WS-Addressing headers added successfully', {
-      action,
-      to: this.config.baseUrl,
-      method: 'addSoapHeader(xmlString) - separate elements',
-    });
-  }
-
-
-  /**
-   * Create new authenticated session using strong-soap
-   */
-  private async createNewSession(correlationId: string): Promise<soap.Client> {
-    this.logger.log('Creating new GUS session with strong-soap', {
-      correlationId,
-    });
-
-    try {
-      // Step 1: Create strong-soap client from WSDL
-      const client = await new Promise<soap.Client>((resolve, reject) => {
-        soap.createClient(this.config.wsdlUrl, {
-          endpoint: this.config.baseUrl,
-          wsdl_options: {
-            timeout: this.config.timeout,
-          },
-        }, (err: Error | null, client: soap.Client) => {
-          if (err) reject(err);
-          else resolve(client);
-        });
-      });
-
-      // Set the endpoint explicitly
-      client.setEndpoint(this.config.baseUrl);
-
-      this.logger.log('strong-soap client created from WSDL', {
-        endpoint: this.config.baseUrl,
-        correlationId,
-      });
-
-
-      // Step 3: Add WS-Addressing SOAP headers required by GUS API
-      this.addWSAddressingHeaders(
-        client,
-        'http://CIS/BIR/PUBL/2014/07/IUslugaBIRzewnPubl/Zaloguj'
-      );
-
-      // Step 4: Perform login using Zaloguj operation with options to see request
-      const loginResult = await new Promise<any>((resolve, reject) => {
-        // Add request interceptor using options parameter
-        const options = {
-          // This will be passed as 4th parameter to capture request
-        };
-
-        client.Zaloguj(
-          { pKluczUzytkownika: this.config.userKey },
-          (err: Error | null, result: any, envelope: any, soapHeader: any) => {
-            // CRITICAL: Log the actual SOAP request being sent
-            if (client.lastRequest) {
-              this.logger.debug('Zaloguj SOAP Request (first 1200 chars)', {
-                request: client.lastRequest.substring(0, 1200),
-                correlationId,
-              });
-            }
-
-            // Always log request and response for debugging
-            this.logger.debug('Zaloguj callback invoked', {
-              hasError: !!err,
-              errorMessage: err ? err.message : 'N/A',
-              resultType: typeof result,
-              resultValue: JSON.stringify(result),
-              envelopeType: typeof envelope,
-              envelopeValue: envelope ? JSON.stringify(envelope).substring(0, 500) : 'N/A',
-              lastResponse: client.lastResponse ? client.lastResponse.substring(0, 800) : 'N/A',
-              correlationId,
-            });
-
-            if (err) {
-              this.logger.warn('Zaloguj operation failed', {
-                error: err.message,
-                lastRequest: client.lastRequest ? client.lastRequest.substring(0, 1200) : 'N/A',
-                lastResponse: client.lastResponse ? client.lastResponse.substring(0, 1200) : 'N/A',
-                correlationId,
-              });
-              reject(err);
-            } else {
-              this.logger.debug('Zaloguj operation completed successfully', {
-                resultIsNull: result === null,
-                correlationId,
-              });
-              resolve(result);
-            }
-          },
-          options
-        );
-      });
-
-      // Validate and extract session ID using Zod schema
-      // This replaces the previous defensive extraction logic with type-safe validation
-      const validation = ZalogujResponseSchema.safeParse(loginResult);
-
-      if (!validation.success) {
-        // Log detailed information about unexpected response structure
-        this.logger.error('Zaloguj response failed schema validation', {
-          loginResultType: typeof loginResult,
-          loginResultValue: JSON.stringify(loginResult),
-          loginResultKeys: typeof loginResult === 'object' && loginResult !== null ? Object.keys(loginResult) : 'N/A',
-          zodErrors: validation.error.issues,
-          correlationId,
-        });
-
-        throw new BusinessException({
-          errorCode: 'GUS_INVALID_RESPONSE',
-          message: 'GUS API returned unexpected Zaloguj response structure. Expected string or {ZalogujResult: string}.',
-          correlationId,
-          source: 'GUS',
-          details: {
-            zodErrors: validation.error.issues,
-            responseStructure: typeof loginResult === 'object' && loginResult !== null
-              ? Object.keys(loginResult)
-              : typeof loginResult,
-          },
-        });
-      }
-
-      // Extract sessionId from validated response
-      const sessionId = typeof validation.data === 'string'
-        ? validation.data
-        : validation.data.ZalogujResult;
-
-      // Log which response structure was used (for monitoring API behavior)
-      const responseType = typeof validation.data === 'string' ? 'direct-string' : 'ZalogujResult-object';
-      this.logger.debug('Session ID extracted from Zaloguj response', {
-        responseType,
-        sessionIdLength: sessionId.length,
-        correlationId,
-      });
-
-      this.logger.log('Session ID extracted successfully', {
-        sessionIdLength: sessionId.length,
-        sessionIdPrefix: sessionId.substring(0, 8) + '...',
-        correlationId,
-      });
-
-      // Step 3: Add session ID as HTTP header for all subsequent requests
-      client.addHttpHeader('sid', sessionId);
-
-      // Also store in client for interceptor fallback (now properly typed)
-      client._sessionId = sessionId;
-
-      this.logger.log('HTTP header "sid" added to client', {
-        sessionIdStored: true,
-        correlationId,
-      });
-
-      // Store session information
-      const expiresAt = new Date(Date.now() + this.config.sessionTimeoutMs);
-
-      this.currentSession = {
-        sessionId,
-        expiresAt,
-        client,
-      };
-
-      this.logger.log('GUS session created successfully with strong-soap', {
-        sessionId: sessionId.substring(0, 8) + '...',
-        expiresAt,
-        correlationId,
-      });
-
-      return client;
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      this.logger.error('Failed to create GUS session with strong-soap', {
-        error: errorMessage,
-        correlationId,
-      });
-
-      throw createErrorResponse({
-        errorCode: 'GUS_AUTHENTICATION_FAILED',
-        message: 'Failed to authenticate with GUS service using strong-soap',
-        correlationId,
-        source: 'GUS',
-        details: { originalError: errorMessage },
-      });
-    }
-  }
-
-  /**
    * Logout and cleanup session
+   *
+   * Delegates to GusSessionManager for session management.
+   * Headers are added automatically by GusRequestInterceptor.
    */
   async logout(correlationId: string): Promise<void> {
-    if (!this.currentSession) {
-      return;
-    }
-
-    const session = this.currentSession; // Capture for TypeScript type narrowing
-
-    try {
-      // Add WS-Addressing headers for Wyloguj operation
-      this.addWSAddressingHeaders(
-        session.client,
-        'http://CIS/BIR/PUBL/2014/07/IUslugaBIRzewnPubl/Wyloguj'
-      );
-
-      // Call Wyloguj operation using strong-soap
-      await new Promise<void>((resolve, reject) => {
-        session.client.Wyloguj(
-          { pIdentyfikatorSesji: session.sessionId },
-          (err: Error | null) => {
-            if (err) {
-              this.logger.warn('Wyloguj operation failed', {
-                error: err.message,
-                correlationId,
-              });
-              // Don't reject - logout is best-effort
-              resolve();
-            } else {
-              this.logger.log('GUS session logged out successfully', { correlationId });
-              resolve();
-            }
-          }
-        );
-      });
-    } catch (error) {
-      this.logger.warn('Failed to logout GUS session gracefully', {
-        error: error instanceof Error ? error.message : String(error),
-        correlationId,
-      });
-    } finally {
-      this.currentSession = null;
-    }
+    await this.sessionManager.logout(correlationId);
   }
 
   /**
@@ -1009,7 +622,7 @@ export class GusService {
       errorMessage.includes('kod=7') // Nieprawidłowy identyfikator sesji
     ) {
       // Clear invalid session
-      this.currentSession = null;
+      this.sessionManager.clearSession();
 
       return createErrorResponse({
         errorCode: 'GUS_SESSION_EXPIRED',
@@ -1022,7 +635,7 @@ export class GusService {
 
     // HTTP 401 Unauthorized - session problems
     if (error.response?.status === 401 || errorMessage.includes('401')) {
-      this.currentSession = null;
+      this.sessionManager.clearSession();
 
       return createErrorResponse({
         errorCode: 'GUS_SESSION_EXPIRED',
@@ -1069,7 +682,7 @@ export class GusService {
       errorMessage.includes('sid')
     ) {
       // Clear invalid session
-      this.currentSession = null;
+      this.sessionManager.clearSession();
 
       return createErrorResponse({
         errorCode: 'GUS_SESSION_EXPIRED',
