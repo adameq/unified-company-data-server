@@ -1,6 +1,6 @@
 import { Provider } from '@nestjs/common';
 import { Logger } from '@nestjs/common';
-import { setup, fromPromise, createActor, assign } from 'xstate';
+import { setup, fromPromise, assign } from 'xstate';
 import {
   OrchestrationContext,
   createInitialContext,
@@ -41,63 +41,6 @@ export interface OrchestrationMachineInput {
   logger: Logger;
 }
 
-/**
- * Helper function to wrap service call with retry logic
- *
- * This creates a retry actor that manages exponential backoff and error handling
- * for external API calls. Used by actors injected via .provide().
- *
- * @param serviceName - Name of the service for logging (GUS, KRS, CEIDG)
- * @param serviceCall - The actual API call function
- * @param retryConfig - Retry configuration (maxRetries, initialDelay)
- * @param correlationId - Request correlation ID for tracking
- * @param logger - Logger instance
- * @returns Promise that resolves with service result or rejects with error
- */
-export async function wrapWithRetry<T>(
-  serviceName: 'GUS' | 'KRS' | 'CEIDG',
-  serviceCall: () => Promise<T>,
-  retryConfig: { maxRetries: number; initialDelay: number },
-  correlationId: string,
-  logger: Logger,
-): Promise<T> {
-  const retryMachine = createRetryMachine(
-    serviceName,
-    correlationId,
-    logger,
-    retryConfig,
-  );
-
-  const retryActor = createActor(retryMachine, {
-    input: {
-      serviceCall,
-      correlationId,
-    },
-  });
-
-  return new Promise((resolve, reject) => {
-    retryActor.subscribe({
-      complete: () => {
-        const snapshot = retryActor.getSnapshot();
-        const finalState = snapshot.value as string;
-
-        if (finalState === 'success') {
-          const result =
-            snapshot.output !== undefined
-              ? snapshot.output
-              : snapshot.context?.result;
-          resolve(result);
-        } else if (finalState === 'failed') {
-          const error = snapshot.output || snapshot.context?.lastError;
-          reject(error);
-        }
-      },
-      error: (err) => reject(err),
-    });
-
-    retryActor.start();
-  });
-}
 
 /**
  * Base Orchestration Machine (stub implementations)
@@ -120,51 +63,23 @@ export const baseOrchestrationMachine = setup({
     },
   },
 
-  // Stub actors - will be overridden by .provide()
+  // Stub actors - retry machines will be provided by .provide() in OrchestrationService
+  // These are placeholders that will be replaced with actual retry machine implementations
   actors: {
-    fetchGusClassification: fromPromise<
-      any,
-      { nip: string; correlationId: string; config: OrchestrationMachineConfig; logger: Logger }
-    >(async () => {
-      throw new Error('fetchGusClassification not implemented - use .provide()');
+    retryGusClassification: fromPromise<any, any>(async () => {
+      throw new Error('retryGusClassification not implemented - use .provide()');
     }),
 
-    fetchGusDetailedData: fromPromise<
-      any,
-      {
-        regon: string;
-        silosId: string;
-        correlationId: string;
-        config: OrchestrationMachineConfig;
-        logger: Logger;
-      }
-    >(async () => {
-      throw new Error('fetchGusDetailedData not implemented - use .provide()');
+    retryGusDetailedData: fromPromise<any, any>(async () => {
+      throw new Error('retryGusDetailedData not implemented - use .provide()');
     }),
 
-    fetchKrsDataFromRegistry: fromPromise<
-      any,
-      {
-        krsNumber: string | undefined;
-        registry: 'P' | 'S';
-        correlationId: string;
-        config: OrchestrationMachineConfig;
-        logger: Logger;
-      }
-    >(async () => {
-      throw new Error('fetchKrsDataFromRegistry not implemented - use .provide()');
+    retryKrsData: fromPromise<any, any>(async () => {
+      throw new Error('retryKrsData not implemented - use .provide()');
     }),
 
-    fetchCeidgData: fromPromise<
-      any,
-      {
-        nip: string;
-        correlationId: string;
-        config: OrchestrationMachineConfig;
-        logger: Logger;
-      }
-    >(async () => {
-      throw new Error('fetchCeidgData not implemented - use .provide()');
+    retryCeidgData: fromPromise<any, any>(async () => {
+      throw new Error('retryCeidgData not implemented - use .provide()');
     }),
 
     mapInactiveCompany: fromPromise<any, OrchestrationContext>(async () => {
@@ -528,12 +443,10 @@ export const baseOrchestrationMachine = setup({
       },
       invoke: {
         id: 'gusClassification',
-        src: 'fetchGusClassification',
+        src: 'retryGusClassification',
         input: ({ context }) => ({
           nip: context.nip,
           correlationId: context.correlationId,
-          config: context.config,
-          logger: context.logger,
         }),
         onDone: [
           {
@@ -606,13 +519,11 @@ export const baseOrchestrationMachine = setup({
       },
       invoke: {
         id: 'gusFullReport',
-        src: 'fetchGusDetailedData',
+        src: 'retryGusDetailedData',
         input: ({ context }) => ({
           regon: context.classification!.Regon,
           silosId: context.classification!.silosId || context.classification!.SilosID,
           correlationId: context.correlationId,
-          config: context.config,
-          logger: context.logger,
         }),
         onDone: [
           {
@@ -639,13 +550,11 @@ export const baseOrchestrationMachine = setup({
       },
       invoke: {
         id: 'krsDataFromP',
-        src: 'fetchKrsDataFromRegistry',
+        src: 'retryKrsData',
         input: ({ context }) => ({
           krsNumber: context.krsNumber,
           registry: 'P' as const,
           correlationId: context.correlationId,
-          config: context.config,
-          logger: context.logger,
         }),
         onDone: {
           target: 'mappingToUnifiedFormat',
@@ -675,13 +584,11 @@ export const baseOrchestrationMachine = setup({
       },
       invoke: {
         id: 'krsDataFromS',
-        src: 'fetchKrsDataFromRegistry',
+        src: 'retryKrsData',
         input: ({ context }) => ({
           krsNumber: context.krsNumber,
           registry: 'S' as const,
           correlationId: context.correlationId,
-          config: context.config,
-          logger: context.logger,
         }),
         onDone: {
           target: 'mappingToUnifiedFormat',
@@ -701,12 +608,10 @@ export const baseOrchestrationMachine = setup({
       },
       invoke: {
         id: 'ceidgData',
-        src: 'fetchCeidgData',
+        src: 'retryCeidgData',
         input: ({ context }) => ({
           nip: context.nip,
           correlationId: context.correlationId,
-          config: context.config,
-          logger: context.logger,
         }),
         onDone: {
           target: 'mappingToUnifiedFormat',
@@ -726,13 +631,11 @@ export const baseOrchestrationMachine = setup({
       },
       invoke: {
         id: 'gusGenericData',
-        src: 'fetchGusDetailedData',
+        src: 'retryGusDetailedData',
         input: ({ context }) => ({
           regon: context.classification!.Regon,
           silosId: context.classification!.silosId || context.classification!.SilosID,
           correlationId: context.correlationId,
-          config: context.config,
-          logger: context.logger,
         }),
         onDone: {
           target: 'mappingToUnifiedFormat',
@@ -752,13 +655,11 @@ export const baseOrchestrationMachine = setup({
       },
       invoke: {
         id: 'gusDetailedFallback',
-        src: 'fetchGusDetailedData',
+        src: 'retryGusDetailedData',
         input: ({ context }) => ({
           regon: context.classification!.Regon,
           silosId: context.classification!.silosId || context.classification!.SilosID,
           correlationId: context.correlationId,
-          config: context.config,
-          logger: context.logger,
         }),
         onDone: {
           target: 'mappingToUnifiedFormat',
