@@ -12,30 +12,43 @@ export const EnvironmentSchema = z
   GUS_USER_KEY: z.string().min(1).describe('GUS SOAP API user key'),
   CEIDG_JWT_TOKEN: z.string().min(1).describe('CEIDG v3 API JWT token'),
 
-  // API Keys for Authentication
+  // Application-level API Keys for Authentication
+  // New naming convention: APP_* prefix for application-level configuration
+  APP_API_KEYS: z
+    .string()
+    .optional()
+    .transform((str) => str?.split(',').map((key) => key.trim()))
+    .refine(
+      (keys) => !keys || keys.every((key) => key.length >= 32),
+      'Each API key must be at least 32 characters',
+    ),
+  // Deprecated: Use APP_API_KEYS instead (backward compatibility)
   VALID_API_KEYS: z
     .string()
-    .transform((str) => str.split(',').map((key) => key.trim()))
+    .optional()
+    .transform((str) => str?.split(',').map((key) => key.trim()))
     .refine(
-      (keys) => keys.every((key) => key.length >= 32),
+      (keys) => !keys || keys.every((key) => key.length >= 32),
       'Each API key must be at least 32 characters',
     ),
 
-  // Performance Configuration
-  REQUEST_TIMEOUT: z.coerce.number().int().min(1000).max(30000).default(15000),
-  EXTERNAL_API_TIMEOUT: z.coerce
-    .number()
-    .int()
-    .min(1000)
-    .max(10000)
-    .default(5000),
+  // Application-level Performance Configuration
+  APP_REQUEST_TIMEOUT: z.coerce.number().int().min(1000).max(30000).optional(),
+  REQUEST_TIMEOUT: z.coerce.number().int().min(1000).max(30000).optional(), // Deprecated
 
-  // Rate Limiting
-  RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(1000).default(100),
+  APP_EXTERNAL_API_TIMEOUT: z.coerce.number().int().min(1000).max(10000).optional(),
+  EXTERNAL_API_TIMEOUT: z.coerce.number().int().min(1000).max(10000).optional(), // Deprecated
 
-  // Logging Configuration
-  LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
-  LOG_FORMAT: z.enum(['json', 'pretty']).default('pretty'),
+  // Application-level Rate Limiting (incoming requests)
+  APP_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(1000).optional(),
+  RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(1000).optional(), // Deprecated
+
+  // Application-level Logging Configuration
+  APP_LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug']).optional(),
+  LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug']).optional(), // Deprecated
+
+  APP_LOG_FORMAT: z.enum(['json', 'pretty']).optional(),
+  LOG_FORMAT: z.enum(['json', 'pretty']).optional(), // Deprecated
 
   // External API Base URLs
   // WARNING: Development defaults provided for convenience.
@@ -72,7 +85,7 @@ export const EnvironmentSchema = z
   CEIDG_MAX_RETRIES: z.coerce.number().int().min(0).max(5).default(2),
   CEIDG_INITIAL_DELAY: z.coerce.number().int().min(50).max(2000).default(150),
 
-  // GUS Rate Limiting
+  // GUS-specific Rate Limiting (outgoing requests to GUS API)
   GUS_MAX_REQUESTS_PER_SECOND: z.coerce
     .number()
     .int()
@@ -83,53 +96,48 @@ export const EnvironmentSchema = z
       'Maximum requests per second for GUS API (token bucket rate limiter)',
     ),
 
-  // Health Check Configuration
-  HEALTH_CHECK_ENABLED: z.coerce.boolean().default(true),
-  HEALTH_CHECK_TIMEOUT: z.coerce
-    .number()
-    .int()
-    .min(1000)
-    .max(10000)
-    .default(3000),
+  // Application-level Health Check Configuration
+  APP_HEALTH_CHECK_ENABLED: z.coerce.boolean().optional(),
+  HEALTH_CHECK_ENABLED: z.coerce.boolean().optional(), // Deprecated
 
-  // Orchestration Timeouts
-  ORCHESTRATION_TIMEOUT: z.coerce
-    .number()
-    .int()
-    .min(5000)
-    .max(60000)
-    .default(30000)
-    .describe('State machine orchestration timeout in milliseconds'),
+  APP_HEALTH_CHECK_TIMEOUT: z.coerce.number().int().min(1000).max(10000).optional(),
+  HEALTH_CHECK_TIMEOUT: z.coerce.number().int().min(1000).max(10000).optional(), // Deprecated
 
-  // Swagger Configuration
-  SWAGGER_ENABLED: z.coerce.boolean().default(true),
-  SWAGGER_SERVER_URL_DEVELOPMENT: z
+  // Application-level Orchestration Timeouts
+  APP_ORCHESTRATION_TIMEOUT: z.coerce.number().int().min(5000).max(60000).optional(),
+  ORCHESTRATION_TIMEOUT: z.coerce.number().int().min(5000).max(60000).optional(), // Deprecated
+
+  // Application-level Swagger Configuration
+  APP_SWAGGER_ENABLED: z.coerce.boolean().optional(),
+  SWAGGER_ENABLED: z.coerce.boolean().optional(), // Deprecated
+
+  APP_SWAGGER_SERVER_URL_DEVELOPMENT: z.string().url().optional(),
+  SWAGGER_SERVER_URL_DEVELOPMENT: z.string().url().optional(), // Deprecated
+
+  APP_SWAGGER_SERVER_URL_PRODUCTION: z.string().url().optional(),
+  SWAGGER_SERVER_URL_PRODUCTION: z.string().url().optional(), // Deprecated
+
+  // Application-level CORS Configuration
+  APP_CORS_ALLOWED_ORIGINS: z
     .string()
-    .url()
-    .default('http://localhost:3000')
-    .describe('Development server URL for Swagger'),
-  SWAGGER_SERVER_URL_PRODUCTION: z
-    .string()
-    .url()
     .optional()
-    .describe('Production server URL for Swagger (optional)'),
-
-  // CORS Configuration
+    .transform((str) => {
+      if (!str) return undefined;
+      if (str === '*') return ['*'];
+      return str.split(',').map((origin) => origin.trim()).filter(Boolean);
+    }),
   CORS_ALLOWED_ORIGINS: z
     .string()
-    .default('http://localhost:3000,http://localhost:5173')
+    .optional()
     .transform((str) => {
-      // Special case: '*' means allow all origins (development only - not recommended)
-      if (str === '*') {
-        return ['*'];
-      }
-      // Parse comma-separated origins and trim whitespace
+      if (!str) return undefined;
+      if (str === '*') return ['*'];
       return str.split(',').map((origin) => origin.trim()).filter(Boolean);
-    })
-    .describe('Comma-separated list of allowed CORS origins. Use "*" for all origins (not recommended).'),
+    }), // Deprecated
 
-  // Security Configuration
-  ENABLE_HELMET: z.coerce.boolean().default(true).describe('Enable Helmet security headers middleware'),
+  // Application-level Security Configuration
+  APP_ENABLE_HELMET: z.coerce.boolean().optional(),
+  ENABLE_HELMET: z.coerce.boolean().optional(), // Deprecated
   })
   .superRefine((config, ctx) => {
     // Production safety check: fail fast if using default URLs in production
@@ -157,19 +165,78 @@ export const EnvironmentSchema = z
       }
 
       // CORS security check for production
-      // Note: CORS_ALLOWED_ORIGINS has .transform() that runs before this .superRefine()
-      // So config.CORS_ALLOWED_ORIGINS is already an array at this point
-      if (config.CORS_ALLOWED_ORIGINS.includes('*')) {
+      // Note: APP_CORS_ALLOWED_ORIGINS/CORS_ALLOWED_ORIGINS has .transform() that runs before this .superRefine()
+      // So the value is already an array at this point (or undefined if not set)
+      const corsOrigins = config.APP_CORS_ALLOWED_ORIGINS || config.CORS_ALLOWED_ORIGINS;
+      if (corsOrigins && corsOrigins.includes('*')) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message:
-            'CORS_ALLOWED_ORIGINS="*" not allowed in production environment. ' +
+            'APP_CORS_ALLOWED_ORIGINS="*" not allowed in production environment. ' +
             'Allowing all origins creates CSRF vulnerability. ' +
-            'Please set CORS_ALLOWED_ORIGINS to a comma-separated list of allowed domains. ' +
-            'Example: CORS_ALLOWED_ORIGINS=https://yourapp.com,https://api.yourapp.com',
+            'Please set APP_CORS_ALLOWED_ORIGINS to a comma-separated list of allowed domains. ' +
+            'Example: APP_CORS_ALLOWED_ORIGINS=https://yourapp.com,https://api.yourapp.com',
         });
       }
     }
+  })
+  .transform((config) => {
+    // Backward compatibility: Migrate from old names to new APP_* names
+    // If new name is not set, fallback to old name, then to default value
+
+    return {
+      ...config,
+
+      // API Keys: APP_API_KEYS or VALID_API_KEYS (required)
+      APP_API_KEYS: config.APP_API_KEYS || config.VALID_API_KEYS || [],
+
+      // Timeouts: prefer APP_* names, fallback to old names, then defaults
+      APP_REQUEST_TIMEOUT: config.APP_REQUEST_TIMEOUT ?? config.REQUEST_TIMEOUT ?? 15000,
+      APP_EXTERNAL_API_TIMEOUT: config.APP_EXTERNAL_API_TIMEOUT ?? config.EXTERNAL_API_TIMEOUT ?? 5000,
+      APP_ORCHESTRATION_TIMEOUT: config.APP_ORCHESTRATION_TIMEOUT ?? config.ORCHESTRATION_TIMEOUT ?? 30000,
+
+      // Rate Limiting
+      APP_RATE_LIMIT_PER_MINUTE: config.APP_RATE_LIMIT_PER_MINUTE ?? config.RATE_LIMIT_PER_MINUTE ?? 100,
+
+      // Logging
+      APP_LOG_LEVEL: config.APP_LOG_LEVEL ?? config.LOG_LEVEL ?? 'info',
+      APP_LOG_FORMAT: config.APP_LOG_FORMAT ?? config.LOG_FORMAT ?? 'pretty',
+
+      // Health Checks
+      APP_HEALTH_CHECK_ENABLED: config.APP_HEALTH_CHECK_ENABLED ?? config.HEALTH_CHECK_ENABLED ?? true,
+      APP_HEALTH_CHECK_TIMEOUT: config.APP_HEALTH_CHECK_TIMEOUT ?? config.HEALTH_CHECK_TIMEOUT ?? 3000,
+
+      // Swagger
+      APP_SWAGGER_ENABLED: config.APP_SWAGGER_ENABLED ?? config.SWAGGER_ENABLED ?? true,
+      APP_SWAGGER_SERVER_URL_DEVELOPMENT: config.APP_SWAGGER_SERVER_URL_DEVELOPMENT ?? config.SWAGGER_SERVER_URL_DEVELOPMENT ?? 'http://localhost:3000',
+      APP_SWAGGER_SERVER_URL_PRODUCTION: config.APP_SWAGGER_SERVER_URL_PRODUCTION ?? config.SWAGGER_SERVER_URL_PRODUCTION,
+
+      // CORS
+      APP_CORS_ALLOWED_ORIGINS: config.APP_CORS_ALLOWED_ORIGINS ?? config.CORS_ALLOWED_ORIGINS ?? ['http://localhost:3000', 'http://localhost:5173'],
+
+      // Security
+      APP_ENABLE_HELMET: config.APP_ENABLE_HELMET ?? config.ENABLE_HELMET ?? true,
+    };
   });
 
-export type Environment = z.infer<typeof EnvironmentSchema>;
+// Export base type inferred from schema
+type EnvironmentBase = z.infer<typeof EnvironmentSchema>;
+
+// Export final type with APP_* fields guaranteed to be non-undefined (from .transform() defaults)
+export type Environment = EnvironmentBase & {
+  // Application-level configuration (always defined after .transform())
+  APP_API_KEYS: string[];
+  APP_REQUEST_TIMEOUT: number;
+  APP_EXTERNAL_API_TIMEOUT: number;
+  APP_ORCHESTRATION_TIMEOUT: number;
+  APP_RATE_LIMIT_PER_MINUTE: number;
+  APP_LOG_LEVEL: 'error' | 'warn' | 'info' | 'debug';
+  APP_LOG_FORMAT: 'json' | 'pretty';
+  APP_HEALTH_CHECK_ENABLED: boolean;
+  APP_HEALTH_CHECK_TIMEOUT: number;
+  APP_SWAGGER_ENABLED: boolean;
+  APP_SWAGGER_SERVER_URL_DEVELOPMENT: string;
+  APP_SWAGGER_SERVER_URL_PRODUCTION: string | undefined;
+  APP_CORS_ALLOWED_ORIGINS: string[];
+  APP_ENABLE_HELMET: boolean;
+};

@@ -167,7 +167,16 @@ Retrieve unified company data by NIP number.
 
 ## Environment Configuration
 
-Required environment variables:
+### Naming Convention
+
+**NEW (2025-10)**: Application-level configuration uses `APP_*` prefix to distinguish from service-specific variables:
+
+- **Application-level** (server, auth, CORS, logging): `APP_*` prefix
+- **Service integrations** (GUS, KRS, CEIDG): Service-specific prefix (`GUS_*`, `KRS_*`, `CEIDG_*`)
+
+**Backward Compatibility**: Old names without `APP_` prefix are still supported for 2-3 versions but deprecated.
+
+### Required Environment Variables
 
 ```bash
 # Server Configuration
@@ -179,14 +188,18 @@ GUS_USER_KEY=d235b29b4a284c3d89ab   # GUS SOAP API key (20 chars minimum)
 CEIDG_JWT_TOKEN=your_jwt_token_here  # CEIDG v3 API JWT (50 chars minimum)
 
 # API Authentication (for production)
-VALID_API_KEYS=key1,key2,key3       # Comma-separated API keys (32 chars each)
+APP_API_KEYS=key1,key2,key3         # Comma-separated API keys (32 chars each)
+                                    # OLD: VALID_API_KEYS (deprecated, still works)
 
-# Performance & Timeouts
-REQUEST_TIMEOUT=15000               # Request timeout in ms
-EXTERNAL_API_TIMEOUT=5000           # External API timeout in ms
-RATE_LIMIT_PER_MINUTE=100          # Rate limit per minute
+# Application-level Performance & Timeouts
+APP_REQUEST_TIMEOUT=15000           # Request timeout in ms (OLD: REQUEST_TIMEOUT)
+APP_EXTERNAL_API_TIMEOUT=5000       # External API timeout in ms (OLD: EXTERNAL_API_TIMEOUT)
+APP_RATE_LIMIT_PER_MINUTE=100       # Rate limit per minute (OLD: RATE_LIMIT_PER_MINUTE)
 
-# Retry Configuration
+# Application-level Orchestration
+APP_ORCHESTRATION_TIMEOUT=30000     # Orchestration timeout in ms (OLD: ORCHESTRATION_TIMEOUT)
+
+# Service-specific Retry Configuration (no change)
 GUS_MAX_RETRIES=2                   # Max retries for GUS
 GUS_INITIAL_DELAY=100               # Initial delay for GUS retries
 KRS_MAX_RETRIES=2                   # Max retries for KRS
@@ -194,11 +207,27 @@ KRS_INITIAL_DELAY=200               # Initial delay for KRS retries
 CEIDG_MAX_RETRIES=2                 # Max retries for CEIDG
 CEIDG_INITIAL_DELAY=150             # Initial delay for CEIDG retries
 
-# GUS Rate Limiting
+# Service-specific Rate Limiting (no change)
 GUS_MAX_REQUESTS_PER_SECOND=10      # Max requests/second for GUS API (token bucket)
 
-# CORS Configuration
-CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173  # Comma-separated origins
+# Application-level Logging
+APP_LOG_LEVEL=debug                 # Log level: error, warn, info, debug (OLD: LOG_LEVEL)
+APP_LOG_FORMAT=pretty               # Format: json, pretty (OLD: LOG_FORMAT)
+
+# Application-level CORS Configuration
+APP_CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173  # OLD: CORS_ALLOWED_ORIGINS
+
+# Application-level Security Headers
+APP_ENABLE_HELMET=true              # Enable Helmet security headers (OLD: ENABLE_HELMET)
+
+# Application-level Health Checks
+APP_HEALTH_CHECK_ENABLED=true       # Enable health checks (OLD: ENABLE_HEALTH_CHECKS)
+APP_HEALTH_CHECK_TIMEOUT=3000       # Health check timeout in ms (OLD: HEALTH_CHECK_TIMEOUT)
+
+# Application-level Swagger
+APP_SWAGGER_ENABLED=true            # Enable Swagger docs (OLD: SWAGGER_ENABLED)
+APP_SWAGGER_SERVER_URL_DEVELOPMENT=http://localhost:3000  # OLD: SWAGGER_SERVER_URL_DEVELOPMENT
+APP_SWAGGER_SERVER_URL_PRODUCTION=https://api.example.com  # OLD: SWAGGER_SERVER_URL_PRODUCTION
 ```
 
 ### CORS Security Configuration
@@ -211,7 +240,7 @@ Use an **explicit list of allowed origins** instead of wildcard `*`:
 
 ```bash
 # .env
-CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173
+APP_CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173
 ```
 
 **Benefits**:
@@ -226,7 +255,7 @@ For **quick local testing only**, you can use wildcard (but this is discouraged)
 
 ```bash
 # .env (NOT RECOMMENDED - only for quick testing)
-CORS_ALLOWED_ORIGINS=*
+APP_CORS_ALLOWED_ORIGINS=*
 ```
 
 **Security Risk**: Wildcard `*` combined with `credentials: true` creates **CSRF vulnerability**. The application logs a warning when this configuration is detected.
@@ -237,14 +266,14 @@ In production, wildcard `*` is **blocked by Zod validation** (`environment.schem
 
 ```bash
 # .env.production
-CORS_ALLOWED_ORIGINS=https://yourapp.com,https://www.yourapp.com,https://admin.yourapp.com
+APP_CORS_ALLOWED_ORIGINS=https://yourapp.com,https://www.yourapp.com,https://admin.yourapp.com
 ```
 
-The application will **fail to start** if `CORS_ALLOWED_ORIGINS=*` is set in `NODE_ENV=production`.
+The application will **fail to start** if `APP_CORS_ALLOWED_ORIGINS=*` is set in `NODE_ENV=production`.
 
 #### Default Value
 
-If `CORS_ALLOWED_ORIGINS` is not set, the application defaults to:
+If `APP_CORS_ALLOWED_ORIGINS` is not set, the application defaults to:
 
 ```bash
 http://localhost:3000,http://localhost:5173

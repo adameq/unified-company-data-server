@@ -35,7 +35,7 @@ export const createCeidgConfig = (env: Environment): CeidgConfig => ({
     type: 'Bearer',
     token: env.CEIDG_JWT_TOKEN,
   },
-  timeout: env.EXTERNAL_API_TIMEOUT,
+  timeout: env.APP_EXTERNAL_API_TIMEOUT,
   retryPolicy: {
     maxRetries: env.CEIDG_MAX_RETRIES,
     initialDelay: env.CEIDG_INITIAL_DELAY,

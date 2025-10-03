@@ -30,7 +30,7 @@ export const createGusConfig = (env: Environment): GusConfig => ({
   baseUrl: env.GUS_BASE_URL,
   wsdlUrl: env.GUS_WSDL_URL,
   userKey: env.GUS_USER_KEY,
-  timeout: env.EXTERNAL_API_TIMEOUT,
+  timeout: env.APP_EXTERNAL_API_TIMEOUT,
   retryPolicy: {
     maxRetries: env.GUS_MAX_RETRIES,
     initialDelay: env.GUS_INITIAL_DELAY,

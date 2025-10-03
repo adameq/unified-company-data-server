@@ -15,7 +15,7 @@ async function bootstrap() {
   const logger = new Logger('Bootstrap');
 
   // Enable CORS with strict origin validation
-  const allowedOrigins = configService.get('CORS_ALLOWED_ORIGINS', { infer: true });
+  const allowedOrigins = configService.get('APP_CORS_ALLOWED_ORIGINS', { infer: true });
   const nodeEnv = configService.get('NODE_ENV', { infer: true });
 
   // Check if wildcard is configured (allows all origins)
@@ -23,7 +23,7 @@ async function bootstrap() {
 
   app.enableCors({
     // Native cors library handles origin validation:
-    // - true: allows all origins (when CORS_ALLOWED_ORIGINS="*")
+    // - true: allows all origins (when APP_CORS_ALLOWED_ORIGINS="*")
     // - string[]: whitelist validation with automatic rejection
     // - Automatically allows requests with no origin (mobile apps, Postman, server-to-server)
     origin: allowAllOrigins ? true : allowedOrigins,
@@ -37,7 +37,7 @@ async function bootstrap() {
     logger.warn(
       '⚠️  SECURITY WARNING: CORS configured to allow all origins (origin: true)\n' +
         '   This combined with credentials: true creates CSRF vulnerability.\n' +
-        '   Only use this in development. For production, set CORS_ALLOWED_ORIGINS to specific domains.',
+        '   Only use this in development. For production, set APP_CORS_ALLOWED_ORIGINS to specific domains.',
     );
   }
 
@@ -47,8 +47,8 @@ async function bootstrap() {
   });
 
   // Security middleware - Helmet with comprehensive HTTP security headers
-  const helmetEnabled = configService.get('ENABLE_HELMET', { infer: true });
-  const swaggerEnabled = configService.get('SWAGGER_ENABLED', { infer: true });
+  const helmetEnabled = configService.get('APP_ENABLE_HELMET', { infer: true });
+  const swaggerEnabled = configService.get('APP_SWAGGER_ENABLED', { infer: true });
 
   if (helmetEnabled) {
     const helmetConfig = getHelmetConfig(swaggerEnabled);
@@ -84,8 +84,8 @@ async function bootstrap() {
   // Swagger configuration
 
   if (swaggerEnabled) {
-    const devServerUrl = configService.get('SWAGGER_SERVER_URL_DEVELOPMENT', { infer: true });
-    const prodServerUrl = configService.get('SWAGGER_SERVER_URL_PRODUCTION', { infer: true });
+    const devServerUrl = configService.get('APP_SWAGGER_SERVER_URL_DEVELOPMENT', { infer: true });
+    const prodServerUrl = configService.get('APP_SWAGGER_SERVER_URL_PRODUCTION', { infer: true });
 
     const configBuilder = new DocumentBuilder()
       .setTitle('Unified Company Data Server')

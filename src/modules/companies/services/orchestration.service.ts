@@ -102,8 +102,8 @@ export class OrchestrationService implements OnModuleInit {
   private buildMachineConfig(): OrchestrationMachineConfig {
     return {
       timeouts: {
-        total: this.configService.get('ORCHESTRATION_TIMEOUT', { infer: true }),
-        perService: this.configService.get('EXTERNAL_API_TIMEOUT', { infer: true }),
+        total: this.configService.get('APP_ORCHESTRATION_TIMEOUT', { infer: true }),
+        perService: this.configService.get('APP_EXTERNAL_API_TIMEOUT', { infer: true }),
       },
       retry: {
         gus: {

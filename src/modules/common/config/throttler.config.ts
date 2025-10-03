@@ -21,7 +21,7 @@ export class ThrottlerConfigService implements ThrottlerOptionsFactory {
 
   createThrottlerOptions(): ThrottlerModuleOptions {
     // Get rate limit from environment (requests per minute)
-    const rateLimitPerMinute = this.configService.get('RATE_LIMIT_PER_MINUTE', { infer: true });
+    const rateLimitPerMinute = this.configService.get('APP_RATE_LIMIT_PER_MINUTE', { infer: true });
 
     return {
       throttlers: [

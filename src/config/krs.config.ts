@@ -26,7 +26,7 @@ export interface KrsConfig {
 
 export const createKrsConfig = (env: Environment): KrsConfig => ({
   baseUrl: env.KRS_BASE_URL,
-  timeout: env.EXTERNAL_API_TIMEOUT,
+  timeout: env.APP_EXTERNAL_API_TIMEOUT,
   retryPolicy: {
     maxRetries: env.KRS_MAX_RETRIES,
     initialDelay: env.KRS_INITIAL_DELAY,

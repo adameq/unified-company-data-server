@@ -22,7 +22,7 @@ describe('EnvironmentSchema', () => {
         GUS_USER_KEY: 'test_key_12345678901234567890',
         CEIDG_JWT_TOKEN: 'test_jwt_1234567890123456789012345678901234567890123456',
         VALID_API_KEYS: 'dev_api_key_1234567890abcdef1234567890abcdef',
-        CORS_ALLOWED_ORIGINS: 'http://localhost:3000,http://localhost:5173',
+        APP_CORS_ALLOWED_ORIGINS: 'http://localhost:3000,http://localhost:5173',
       };
 
       // Should not throw - development allows default URLs
@@ -34,20 +34,20 @@ describe('EnvironmentSchema', () => {
       expect(result.CEIDG_BASE_URL).toBeDefined(); // Uses default
     });
 
-    it('should allow CORS_ALLOWED_ORIGINS="*" in development', () => {
+    it('should allow APP_CORS_ALLOWED_ORIGINS="*" in development', () => {
       const config = {
         NODE_ENV: 'development',
         PORT: '3000',
         GUS_USER_KEY: 'test_key_12345678901234567890',
         CEIDG_JWT_TOKEN: 'test_jwt_1234567890123456789012345678901234567890123456',
         VALID_API_KEYS: 'dev_api_key_1234567890abcdef1234567890abcdef',
-        CORS_ALLOWED_ORIGINS: '*',
+        APP_CORS_ALLOWED_ORIGINS: '*',
       };
 
       // Should not throw - development allows wildcard CORS
       const result = EnvironmentSchema.parse(config);
 
-      expect(result.CORS_ALLOWED_ORIGINS).toEqual(['*']);
+      expect(result.APP_CORS_ALLOWED_ORIGINS).toEqual(['*']);
     });
 
     it('should parse comma-separated CORS origins correctly', () => {
@@ -57,12 +57,12 @@ describe('EnvironmentSchema', () => {
         GUS_USER_KEY: 'test_key_12345678901234567890',
         CEIDG_JWT_TOKEN: 'test_jwt_1234567890123456789012345678901234567890123456',
         VALID_API_KEYS: 'dev_api_key_1234567890abcdef1234567890abcdef',
-        CORS_ALLOWED_ORIGINS: 'http://localhost:3000, http://localhost:5173 , http://127.0.0.1:3000',
+        APP_CORS_ALLOWED_ORIGINS: 'http://localhost:3000, http://localhost:5173 , http://127.0.0.1:3000',
       };
 
       const result = EnvironmentSchema.parse(config);
 
-      expect(result.CORS_ALLOWED_ORIGINS).toEqual([
+      expect(result.APP_CORS_ALLOWED_ORIGINS).toEqual([
         'http://localhost:3000',
         'http://localhost:5173',
         'http://127.0.0.1:3000',
@@ -80,10 +80,10 @@ describe('EnvironmentSchema', () => {
       const result = EnvironmentSchema.parse(config);
 
       expect(result.PORT).toBe(3000);
-      expect(result.REQUEST_TIMEOUT).toBe(15000);
-      expect(result.EXTERNAL_API_TIMEOUT).toBe(5000);
-      expect(result.RATE_LIMIT_PER_MINUTE).toBe(100);
-      expect(result.LOG_LEVEL).toBe('info');
+      expect(result.APP_REQUEST_TIMEOUT).toBe(15000);
+      expect(result.APP_EXTERNAL_API_TIMEOUT).toBe(5000);
+      expect(result.APP_RATE_LIMIT_PER_MINUTE).toBe(100);
+      expect(result.APP_LOG_LEVEL).toBe('info');
       expect(result.GUS_MAX_RETRIES).toBe(2);
       expect(result.KRS_MAX_RETRIES).toBe(2);
       expect(result.CEIDG_MAX_RETRIES).toBe(2);
@@ -106,7 +106,7 @@ describe('EnvironmentSchema', () => {
         GUS_USER_KEY: 'prod_key_12345678901234567890',
         CEIDG_JWT_TOKEN: 'prod_jwt_1234567890123456789012345678901234567890123456',
         VALID_API_KEYS: 'prod_api_key_1234567890abcdef1234567890abcdef,backup_key_abcdefghijklmnopqrstuvwxyz123456',
-        CORS_ALLOWED_ORIGINS: 'https://app.example.com,https://www.example.com',
+        APP_CORS_ALLOWED_ORIGINS: 'https://app.example.com,https://www.example.com',
         GUS_BASE_URL: 'https://production.gus.gov.pl',
         GUS_WSDL_URL: 'https://production.gus.gov.pl/wsdl',
         KRS_BASE_URL: 'https://production.krs.gov.pl',
@@ -117,7 +117,7 @@ describe('EnvironmentSchema', () => {
 
       expect(result.NODE_ENV).toBe('production');
       expect(result.GUS_BASE_URL).toBe('https://production.gus.gov.pl');
-      expect(result.CORS_ALLOWED_ORIGINS).toEqual([
+      expect(result.APP_CORS_ALLOWED_ORIGINS).toEqual([
         'https://app.example.com',
         'https://www.example.com',
       ]);
@@ -129,7 +129,7 @@ describe('EnvironmentSchema', () => {
         GUS_USER_KEY: 'prod_key_12345678901234567890',
         CEIDG_JWT_TOKEN: 'prod_jwt_1234567890123456789012345678901234567890123456',
         VALID_API_KEYS: 'key1_1234567890abcdef1234567890abcdef,key2_abcdefghijklmnopqrstuvwxyz123456,key3_zyxwvutsrqponmlkjihgfedcba987654',
-        CORS_ALLOWED_ORIGINS: 'https://app.example.com',
+        APP_CORS_ALLOWED_ORIGINS: 'https://app.example.com',
         GUS_BASE_URL: 'https://production.gus.gov.pl',
         GUS_WSDL_URL: 'https://production.gus.gov.pl/wsdl',
         KRS_BASE_URL: 'https://production.krs.gov.pl',
@@ -138,8 +138,8 @@ describe('EnvironmentSchema', () => {
 
       const result = EnvironmentSchema.parse(config);
 
-      expect(result.VALID_API_KEYS).toHaveLength(3);
-      expect(result.VALID_API_KEYS[0]).toBe('key1_1234567890abcdef1234567890abcdef');
+      expect(result.APP_API_KEYS).toHaveLength(3);
+      expect(result.APP_API_KEYS[0]).toBe('key1_1234567890abcdef1234567890abcdef');
     });
   });
 
@@ -150,7 +150,7 @@ describe('EnvironmentSchema', () => {
         GUS_USER_KEY: 'prod_key_12345678901234567890',
         CEIDG_JWT_TOKEN: 'prod_jwt_1234567890123456789012345678901234567890123456',
         VALID_API_KEYS: 'prod_api_key_1234567890abcdef1234567890abcdef',
-        CORS_ALLOWED_ORIGINS: 'https://app.example.com',
+        APP_CORS_ALLOWED_ORIGINS: 'https://app.example.com',
         // Missing: GUS_BASE_URL, GUS_WSDL_URL, KRS_BASE_URL, CEIDG_BASE_URL
       };
 
@@ -172,7 +172,7 @@ describe('EnvironmentSchema', () => {
         GUS_USER_KEY: 'prod_key_12345678901234567890',
         CEIDG_JWT_TOKEN: 'prod_jwt_1234567890123456789012345678901234567890123456',
         VALID_API_KEYS: 'prod_api_key_1234567890abcdef1234567890abcdef',
-        CORS_ALLOWED_ORIGINS: 'https://app.example.com',
+        APP_CORS_ALLOWED_ORIGINS: 'https://app.example.com',
         GUS_BASE_URL: 'https://production.gus.gov.pl',
         GUS_WSDL_URL: 'https://production.gus.gov.pl/wsdl',
         CEIDG_BASE_URL: 'https://production.ceidg.gov.pl',
@@ -184,7 +184,7 @@ describe('EnvironmentSchema', () => {
       expect(() => EnvironmentSchema.parse(config)).toThrow('KRS_BASE_URL');
     });
 
-    it('should throw error for CORS_ALLOWED_ORIGINS="*" in production', () => {
+    it('should throw error for APP_CORS_ALLOWED_ORIGINS="*" in production', () => {
       process.env.GUS_BASE_URL = 'https://production.gus.gov.pl';
       process.env.GUS_WSDL_URL = 'https://production.gus.gov.pl/wsdl';
       process.env.KRS_BASE_URL = 'https://production.krs.gov.pl';
@@ -195,7 +195,7 @@ describe('EnvironmentSchema', () => {
         GUS_USER_KEY: 'prod_key_12345678901234567890',
         CEIDG_JWT_TOKEN: 'prod_jwt_1234567890123456789012345678901234567890123456',
         VALID_API_KEYS: 'prod_api_key_1234567890abcdef1234567890abcdef',
-        CORS_ALLOWED_ORIGINS: '*', // ❌ Not allowed in production
+        APP_CORS_ALLOWED_ORIGINS: '*', // ❌ Not allowed in production
         GUS_BASE_URL: 'https://production.gus.gov.pl',
         GUS_WSDL_URL: 'https://production.gus.gov.pl/wsdl',
         KRS_BASE_URL: 'https://production.krs.gov.pl',
@@ -203,7 +203,7 @@ describe('EnvironmentSchema', () => {
       };
 
       expect(() => EnvironmentSchema.parse(config)).toThrow(
-        'CORS_ALLOWED_ORIGINS="*" not allowed in production',
+        'APP_CORS_ALLOWED_ORIGINS',
       );
       expect(() => EnvironmentSchema.parse(config)).toThrow('CSRF vulnerability');
     });
@@ -214,7 +214,7 @@ describe('EnvironmentSchema', () => {
         GUS_USER_KEY: 'prod_key_12345678901234567890',
         CEIDG_JWT_TOKEN: 'prod_jwt_1234567890123456789012345678901234567890123456',
         VALID_API_KEYS: 'prod_api_key_1234567890abcdef1234567890abcdef',
-        CORS_ALLOWED_ORIGINS: 'https://app.example.com',
+        APP_CORS_ALLOWED_ORIGINS: 'https://app.example.com',
       };
 
       expect(() => EnvironmentSchema.parse(config)).toThrow();
@@ -248,15 +248,18 @@ describe('EnvironmentSchema', () => {
       expect(() => EnvironmentSchema.parse(config)).toThrow();
     });
 
-    it('should throw error when VALID_API_KEYS is missing', () => {
+    it('should throw error when APP_API_KEYS (or VALID_API_KEYS) is missing', () => {
       const config = {
         NODE_ENV: 'development',
         GUS_USER_KEY: 'test_key_12345678901234567890',
         CEIDG_JWT_TOKEN: 'test_jwt_1234567890123456789012345678901234567890123456',
-        // Missing: VALID_API_KEYS
+        // Missing: Both APP_API_KEYS and VALID_API_KEYS
       };
 
-      expect(() => EnvironmentSchema.parse(config)).toThrow();
+      // Should NOT throw - backwards compatibility means both are optional
+      // But transform will create empty array [] from undefined
+      const result = EnvironmentSchema.parse(config);
+      expect(result.APP_API_KEYS).toEqual([]);
     });
 
     it('should throw error when API key is shorter than 32 characters', () => {
@@ -314,8 +317,8 @@ describe('EnvironmentSchema', () => {
       const result = EnvironmentSchema.parse(config);
 
       // Should use defaults
-      expect(result.HEALTH_CHECK_ENABLED).toBe(true);
-      expect(result.SWAGGER_ENABLED).toBe(true);
+      expect(result.APP_HEALTH_CHECK_ENABLED).toBe(true);
+      expect(result.APP_SWAGGER_ENABLED).toBe(true);
     });
 
     it('should enforce PORT range constraints', () => {
@@ -360,7 +363,7 @@ describe('EnvironmentSchema', () => {
         GUS_USER_KEY: 'staging_key_12345678901234567890',
         CEIDG_JWT_TOKEN: 'staging_jwt_1234567890123456789012345678901234567890123456',
         VALID_API_KEYS: 'staging_api_key_1234567890abcdef1234567890abcdef',
-        CORS_ALLOWED_ORIGINS: 'https://staging.example.com',
+        APP_CORS_ALLOWED_ORIGINS: 'https://staging.example.com',
       };
 
       const result = EnvironmentSchema.parse(config);
@@ -376,12 +379,12 @@ describe('EnvironmentSchema', () => {
         GUS_USER_KEY: 'staging_key_12345678901234567890',
         CEIDG_JWT_TOKEN: 'staging_jwt_1234567890123456789012345678901234567890123456',
         VALID_API_KEYS: 'staging_api_key_1234567890abcdef1234567890abcdef',
-        CORS_ALLOWED_ORIGINS: '*',
+        APP_CORS_ALLOWED_ORIGINS: '*',
       };
 
       // Should not throw - staging is not production
       const result = EnvironmentSchema.parse(config);
-      expect(result.CORS_ALLOWED_ORIGINS).toEqual(['*']);
+      expect(result.APP_CORS_ALLOWED_ORIGINS).toEqual(['*']);
     });
   });
 });

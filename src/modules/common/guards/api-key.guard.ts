@@ -50,7 +50,7 @@ export class ApiKeyGuard implements CanActivate, OnModuleInit {
   async onModuleInit() {
     // Get API keys from ConfigService - already transformed by Zod schema
     // ConfigService returns string[] (parsed and validated by environment.schema.ts)
-    const apiKeys = this.configService.get('VALID_API_KEYS', { infer: true }) || [];
+    const apiKeys = this.configService.get('APP_API_KEYS', { infer: true });
 
     if (apiKeys.length === 0) {
       this.logger.warn(
