@@ -193,7 +193,61 @@ KRS_MAX_RETRIES=2                   # Max retries for KRS
 KRS_INITIAL_DELAY=200               # Initial delay for KRS retries
 CEIDG_MAX_RETRIES=2                 # Max retries for CEIDG
 CEIDG_INITIAL_DELAY=150             # Initial delay for CEIDG retries
+
+# CORS Configuration
+CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173  # Comma-separated origins
 ```
+
+### CORS Security Configuration
+
+**IMPORTANT**: CORS configuration has security implications when combined with `credentials: true`.
+
+#### Development Setup (Recommended)
+
+Use an **explicit list of allowed origins** instead of wildcard `*`:
+
+```bash
+# .env
+CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173
+```
+
+**Benefits**:
+- ✅ Tests real CORS behavior (catches issues early)
+- ✅ No CSRF vulnerability
+- ✅ Can be committed to git safely
+- ✅ Works with `credentials: true`
+
+#### Wildcard Configuration (NOT RECOMMENDED)
+
+For **quick local testing only**, you can use wildcard (but this is discouraged):
+
+```bash
+# .env (NOT RECOMMENDED - only for quick testing)
+CORS_ALLOWED_ORIGINS=*
+```
+
+**Security Risk**: Wildcard `*` combined with `credentials: true` creates **CSRF vulnerability**. The application logs a warning when this configuration is detected.
+
+#### Production Configuration (REQUIRED)
+
+In production, wildcard `*` is **blocked by Zod validation** (`environment.schema.ts`):
+
+```bash
+# .env.production
+CORS_ALLOWED_ORIGINS=https://yourapp.com,https://www.yourapp.com,https://admin.yourapp.com
+```
+
+The application will **fail to start** if `CORS_ALLOWED_ORIGINS=*` is set in `NODE_ENV=production`.
+
+#### Default Value
+
+If `CORS_ALLOWED_ORIGINS` is not set, the application defaults to:
+
+```bash
+http://localhost:3000,http://localhost:5173
+```
+
+This ensures safe operation out-of-the-box.
 
 ## Development Notes
 
