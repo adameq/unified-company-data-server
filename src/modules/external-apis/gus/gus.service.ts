@@ -151,7 +151,7 @@ export class GusService {
       const session = await this.sessionManager.getSession(correlationId);
 
       // Attach header manager to add headers before SOAP operation
-      this.headerManager.attach(session.client, 'DaneSzukajPodmioty');
+      this.headerManager.attach(session.client, 'DaneSzukajPodmioty', session);
 
       // Normalize NIP (remove spaces)
       const cleanNip = nip.replace(/\s+/g, '').trim();
@@ -328,7 +328,7 @@ export class GusService {
       const session = await this.sessionManager.getSession(correlationId);
 
       // Attach header manager to add headers before SOAP operation
-      this.headerManager.attach(session.client, 'DanePobierzPelnyRaport');
+      this.headerManager.attach(session.client, 'DanePobierzPelnyRaport', session);
 
       // Validate and normalize REGON
       const cleanRegon = regon.replace(/\s+/g, '').trim();

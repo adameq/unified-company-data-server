@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { soap } from 'strong-soap';
 import { GusSessionManager } from './gus-session.manager';
-import type { GusConfig } from './interfaces/gus-session.interface';
+import type { GusConfig, GusSession } from './interfaces/gus-session.interface';
 
 /**
  * GusHeaderManager
@@ -35,7 +35,8 @@ import type { GusConfig } from './interfaces/gus-session.interface';
  * const headerManager = new GusHeaderManager(sessionManager, config);
  *
  * // IMPORTANT: Manually attach headers before each SOAP operation
- * headerManager.attach(session.client, 'DaneSzukajPodmioty');
+ * // Pass session explicitly to avoid hidden temporal dependencies
+ * headerManager.attach(session.client, 'DaneSzukajPodmioty', session);
  * await session.client.DaneSzukajPodmioty(...);
  * ```
  *
@@ -76,9 +77,10 @@ export class GusHeaderManager {
    *
    * @param client - strong-soap client to attach to
    * @param operation - SOAP operation name (e.g., "DaneSzukajPodmioty")
+   * @param session - Active GUS session with sessionId (explicit dependency)
    */
-  attach(client: soap.Client, operation: string): void {
-    this.addHeaders(client, operation);
+  attach(client: soap.Client, operation: string, session: GusSession): void {
+    this.addHeaders(client, operation, session);
     this.logger.debug('Headers added for operation', { operation });
   }
 
@@ -91,18 +93,9 @@ export class GusHeaderManager {
    *
    * @param client - strong-soap client
    * @param operation - SOAP operation name (e.g., "DaneSzukajPodmioty")
+   * @param session - Active GUS session with sessionId (explicit dependency)
    */
-  private addHeaders(client: soap.Client, operation: string): void {
-    const session = this.sessionManager.getCurrentSession();
-
-    if (!session) {
-      this.logger.warn(
-        'No active session found, skipping header injection for operation',
-        { operation },
-      );
-      return;
-    }
-
+  private addHeaders(client: soap.Client, operation: string, session: GusSession): void {
     // 1. Add HTTP header 'sid' (session ID)
     client.clearHttpHeaders();
     client.addHttpHeader('sid', session.sessionId);

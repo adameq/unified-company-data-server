@@ -93,6 +93,30 @@ describe('GusHeaderManager', () => {
     });
   });
 
+  describe('Session Dependency', () => {
+    test('should accept session as explicit parameter (no hidden temporal dependency)', () => {
+      // Mock session object
+      const mockSession = {
+        sessionId: 'test-session-id-12345',
+        expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+        client: {
+          clearHttpHeaders: jest.fn(),
+          addHttpHeader: jest.fn(),
+          clearSoapHeaders: jest.fn(),
+          addSoapHeader: jest.fn(),
+        } as any,
+      };
+
+      // Test that attach() accepts session as explicit parameter
+      expect(() => {
+        headerManager.attach(mockSession.client, 'DaneSzukajPodmioty', mockSession);
+      }).not.toThrow();
+
+      // Verify headers were set with session.sessionId
+      expect(mockSession.client.addHttpHeader).toHaveBeenCalledWith('sid', 'test-session-id-12345');
+    });
+  });
+
   /**
    * Note: Full header injection, SOAP client integration, and request lifecycle
    * are tested in integration tests (tests/integration/companies-success.spec.ts)
