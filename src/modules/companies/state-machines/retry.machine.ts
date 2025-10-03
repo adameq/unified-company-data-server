@@ -21,21 +21,26 @@ import { z } from 'zod';
  */
 
 // Retry context schema for validation
-// Note: Zod v4 has limited function validation - only validates that value is a function
-// TypeScript interface (RetryInput) provides compile-time signature validation
+// Validates retry mechanism state and service-specific parameters
 const RetryContextSchema = z.object({
   service: z.enum(['GUS', 'KRS', 'CEIDG']),
   attempt: z.number().min(0),
   maxRetries: z.number().min(1).max(5),
   initialDelay: z.number().min(50).max(2000),
   correlationId: z.string().min(1),
-  serviceCall: z
-    .function()
-    .describe('Async service function: () => Promise<any>. Runtime signature validation not available in Zod v4.'),
+
+  // Service-specific parameters (optional, depends on service type)
+  nip: z.string().optional(),        // For GUS classification, CEIDG
+  regon: z.string().optional(),      // For GUS detailed data
+  silosId: z.string().optional(),    // For GUS detailed data
+  krsNumber: z.string().optional(),  // For KRS
+  registry: z.enum(['P', 'S']).optional(), // For KRS registry type
+
   lastError: z
     .object({
       message: z.string(),
       code: z.string().optional(),
+      source: z.string().optional(),
       timestamp: z.date(),
     })
     .optional(),
@@ -45,12 +50,15 @@ const RetryContextSchema = z.object({
 export type RetryContext = z.infer<typeof RetryContextSchema>;
 
 // Input type for retry machine
-// Extended to support passing service-specific parameters
+// Contains service-specific parameters passed by parent machine
 export interface RetryInput {
-  serviceCall?: () => Promise<any>; // Optional - can be overridden via .provide()
   correlationId: string;
-  // Additional fields for service-specific params (passed through to makeApiRequest)
-  [key: string]: any;
+  // Service-specific params (one or more of these will be present):
+  nip?: string;           // For GUS classification, CEIDG
+  regon?: string;         // For GUS detailed data
+  silosId?: string;       // For GUS detailed data
+  krsNumber?: string;     // For KRS
+  registry?: 'P' | 'S';   // For KRS registry type
 }
 
 // Events that the retry machine can receive
@@ -117,7 +125,7 @@ export const createRetryMachine = (
   serviceConfig: ServiceRetryConfig,
 ) => {
 
-  const initialContext: Omit<RetryContext, 'serviceCall'> = {
+  const initialContext: Omit<RetryContext, 'nip' | 'regon' | 'silosId' | 'krsNumber' | 'registry'> = {
     service,
     attempt: 0,
     maxRetries: serviceConfig.maxRetries,
@@ -132,12 +140,9 @@ export const createRetryMachine = (
       input: RetryInput;
     },
     actors: {
-      // Stub actor - MUST be overridden via .provide() in parent machine
-      makeApiRequest: fromPromise(async () => {
-        throw new Error(
-          'makeApiRequest actor must be provided via .provide() - this is a stub implementation'
-        );
-      }),
+      // makeApiRequest actor MUST be provided via .provide() in parent machine
+      // No stub implementation - parent must always provide concrete actor
+
       // scheduleRetry actor (concrete implementation)
       scheduleRetry: fromCallback(({ sendBack, input }) => {
         const context = input as RetryContext;
@@ -307,10 +312,13 @@ export const createRetryMachine = (
       // XState v5: context can be function or object - use function to accept input
       context: ({ input }: { input?: RetryInput }) => ({
         ...initialContext,
-        serviceCall: input?.serviceCall || (() => Promise.reject(new Error('No service call provided'))),
         correlationId: input?.correlationId || correlationId,
-        // Pass through all additional input fields (nip, regon, krsNumber, etc.)
-        ...(input || {}),
+        // Pass through service-specific params from input
+        ...(input?.nip && { nip: input.nip }),
+        ...(input?.regon && { regon: input.regon }),
+        ...(input?.silosId && { silosId: input.silosId }),
+        ...(input?.krsNumber && { krsNumber: input.krsNumber }),
+        ...(input?.registry && { registry: input.registry }),
       }),
       initial: 'attempting',
       states: {
