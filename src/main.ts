@@ -21,29 +21,11 @@ async function bootstrap() {
   const allowAllOrigins = allowedOrigins.length === 1 && allowedOrigins[0] === '*';
 
   app.enableCors({
-    origin: allowAllOrigins
-      ? true // Allow all origins when CORS_ALLOWED_ORIGINS="*"
-      : (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-          // Strict whitelist validation using CORS_ALLOWED_ORIGINS environment variable
-
-          // Allow requests with no origin (e.g., mobile apps, Postman, server-to-server)
-          if (!origin) {
-            return callback(null, true);
-          }
-
-          // Check if origin is in whitelist
-          if (allowedOrigins.includes(origin)) {
-            return callback(null, true);
-          }
-
-          // Reject unauthorized origin
-          logger.warn(`CORS: Blocked request from unauthorized origin: ${origin}`, {
-            allowedOrigins,
-            requestOrigin: origin,
-            environment: nodeEnv,
-          });
-          return callback(new Error('Not allowed by CORS policy'));
-        },
+    // Native cors library handles origin validation:
+    // - true: allows all origins (when CORS_ALLOWED_ORIGINS="*")
+    // - string[]: whitelist validation with automatic rejection
+    // - Automatically allows requests with no origin (mobile apps, Postman, server-to-server)
+    origin: allowAllOrigins ? true : allowedOrigins,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
