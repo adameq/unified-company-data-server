@@ -4,6 +4,7 @@ import {
   ExecutionContext,
   CallHandler,
   Logger,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
@@ -47,9 +48,21 @@ export class CorrelationIdInterceptor implements NestInterceptor {
     const request = context.switchToHttp().getRequest<Request>();
     const response = context.switchToHttp().getResponse<Response>();
 
-    // Read correlationId from request (set by Middleware)
-    const correlationId =
-      extractFromRequest(request) || 'unknown-interceptor-fallback';
+    // Read correlationId from request (MUST be set by Middleware)
+    const correlationId = extractFromRequest(request);
+
+    if (!correlationId) {
+      // Fail-fast: Middleware did not execute - critical configuration error
+      this.logger.error('CRITICAL: Correlation ID missing in interceptor', {
+        path: request.path,
+        method: request.method,
+        middlewareStatus: 'NOT_EXECUTED',
+      });
+
+      throw new InternalServerErrorException(
+        'Correlation ID middleware not executed',
+      );
+    }
 
     // Log request start
     const startTime = Date.now();

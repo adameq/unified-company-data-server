@@ -4,13 +4,11 @@ import {
   ArgumentsHost,
   HttpException,
   Logger,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { getHttpStatusForErrorCode } from '../../../schemas/error-response.schema';
-import {
-  extractFromRequest,
-  generateCorrelationId,
-} from '../utils/correlation-id.utils';
+import { generateCorrelationId, extractFromRequest } from '../utils/correlation-id.utils';
 import { ExceptionHandlerRegistry } from './exception-handlers.registry';
 
 /**
@@ -37,8 +35,8 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
 
-    // Extract correlation ID from request
-    const correlationId = this.getCorrelationId(request);
+    // Extract correlation ID from request (with body-parser exception handling)
+    const correlationId = this.getCorrelationId(request, exception);
 
     // Log the exception with context
     this.logException(exception, request, correlationId);
@@ -56,32 +54,86 @@ export class GlobalExceptionFilter implements ExceptionFilter {
 
   /**
    * Extract correlation ID from request
-   * Safety net: generates ID only for edge cases (WebSockets, GraphQL, etc.)
-   * For HTTP requests, ID should already be set by CorrelationIdMiddleware
+   * Fail-fast: throws error if ID is missing (indicates misconfiguration)
+   * Exception: Body-parser errors (SyntaxError) occur before middleware runs - generate fallback
    *
    * Type-safe: Uses Express.Request extension from src/types/express.d.ts
    */
-  private getCorrelationId(request: Request): string {
-    // Read from request object (set by Middleware for HTTP requests)
+  private getCorrelationId(request: Request, exception: unknown): string {
     const id = extractFromRequest(request);
 
-    if (id) {
-      return id;
+    if (!id) {
+      // Body-parser errors (malformed JSON, etc.) occur BEFORE middleware runs
+      // These are legitimate client errors (400), not configuration errors
+      if (this.isBodyParserError(exception)) {
+        const generatedId = generateCorrelationId();
+        this.logger.warn(
+          'Correlation ID missing due to body-parser error - generating fallback',
+          {
+            generatedId,
+            path: request.path,
+            method: request.method,
+            errorType: exception instanceof Error ? exception.constructor.name : 'Unknown',
+          },
+        );
+        return generatedId;
+      }
+
+      // Fail-fast: Middleware did not execute - critical configuration error
+      this.logger.error(
+        'CRITICAL: Correlation ID missing - CorrelationIdMiddleware not executed',
+        {
+          path: request.path,
+          method: request.method,
+          middlewareStatus: 'NOT_EXECUTED',
+          possibleCauses: [
+            'CommonModule not imported in AppModule',
+            'Middleware registration failed',
+            'Non-HTTP context (WebSocket/GraphQL - not supported)',
+          ],
+        },
+      );
+
+      throw new InternalServerErrorException(
+        'Correlation ID middleware not executed - check application configuration',
+      );
     }
 
-    // Safety net: generate ID for non-HTTP contexts (WebSockets, GraphQL)
-    // This should NOT happen for standard HTTP requests
-    const generatedId = generateCorrelationId();
-    this.logger.warn(
-      'Correlation ID missing - generated fallback (indicates Middleware not executed)',
-      {
-        generatedId,
-        path: request.path,
-        context: 'Could be WebSocket, GraphQL, or Middleware configuration issue',
-      },
-    );
+    return id;
+  }
 
-    return generatedId;
+  /**
+   * Check if exception is a body-parser error (occurs before middleware)
+   * Body-parser throws SyntaxError for malformed JSON
+   * NestJS wraps it in BadRequestException
+   */
+  private isBodyParserError(exception: unknown): boolean {
+    // Body-parser errors are wrapped in BadRequestException by NestJS
+    if (exception instanceof HttpException && exception.getStatus() === 400) {
+      const response = exception.getResponse();
+      const message = typeof response === 'string' ? response : (response as any)?.message || '';
+      const messageStr = Array.isArray(message) ? message.join(' ') : String(message);
+      const messageLower = messageStr.toLowerCase();
+
+      // Check for body-parser specific error patterns
+      return (
+        messageLower.includes('json') ||
+        messageLower.includes('unexpected token') ||
+        messageLower.includes('parse')
+      );
+    }
+
+    // Also check for direct SyntaxError (pre-NestJS wrapping)
+    if (exception instanceof SyntaxError) {
+      const message = exception.message.toLowerCase();
+      return (
+        message.includes('json') ||
+        message.includes('unexpected') ||
+        message.includes('parse')
+      );
+    }
+
+    return false;
   }
 
   /**

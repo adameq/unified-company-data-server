@@ -5,6 +5,7 @@ import {
   Logger,
   Inject,
   OnModuleInit,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
@@ -130,11 +131,26 @@ export class ApiKeyGuard implements CanActivate, OnModuleInit {
 
   /**
    * Get correlation ID from request object
-   * ID is set by CorrelationIdMiddleware (executes before Guards)
+   * Fail-fast: throws error if ID is missing (indicates misconfiguration)
+   * ID MUST be set by CorrelationIdMiddleware (executes before Guards)
    */
   private getCorrelationId(request: Request): string {
-    // Read from request object (set by Middleware)
-    return extractFromRequest(request) || 'unknown-guard-fallback';
+    const id = extractFromRequest(request);
+
+    if (!id) {
+      // Fail-fast: Middleware did not execute - critical configuration error
+      this.logger.error('CRITICAL: Correlation ID missing in guard', {
+        path: request.path,
+        method: request.method,
+        middlewareStatus: 'NOT_EXECUTED',
+      });
+
+      throw new InternalServerErrorException(
+        'Correlation ID middleware not executed',
+      );
+    }
+
+    return id;
   }
 
 }
