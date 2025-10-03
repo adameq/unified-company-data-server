@@ -130,3 +130,49 @@ export function callSimpleSoapOperation<TResult = any>(
     );
   });
 }
+
+/**
+ * Extract SOAP operation result with case-insensitive key matching
+ *
+ * Handles strong-soap's inconsistent XML parsing behavior where
+ * response keys may vary in casing due to xml2js configuration.
+ * strong-soap uses xml2js internally but does not expose configuration
+ * options, leading to unpredictable key casing in SOAP responses.
+ *
+ * This function provides a robust fallback mechanism that works regardless
+ * of how strong-soap or xml2js parses the XML response.
+ *
+ * @param result - SOAP operation result object from strong-soap
+ * @param operationName - SOAP operation name (e.g., "DaneSzukajPodmioty")
+ * @returns Extracted result value or null if not found
+ *
+ * @example
+ * ```typescript
+ * const { result } = await callSoapOperation(client.DaneSzukajPodmioty, params, client);
+ * const xmlData = extractSoapResult(result, 'DaneSzukajPodmioty');
+ * // Works for: DaneSzukajPodmiotyResult, daneszszukajpodmiotyresult, etc.
+ * ```
+ */
+export function extractSoapResult(
+  result: any,
+  operationName: string,
+): string | null {
+  if (!result || typeof result !== 'object') {
+    return null;
+  }
+
+  const resultKey = `${operationName}Result`;
+
+  // Try exact match first (optimization for common case)
+  if (result[resultKey]) {
+    return result[resultKey];
+  }
+
+  // Fallback: case-insensitive search across all keys
+  const normalizedKey = resultKey.toLowerCase();
+  const matchingKey = Object.keys(result).find(
+    (key) => key.toLowerCase() === normalizedKey,
+  );
+
+  return matchingKey ? result[matchingKey] : null;
+}

@@ -17,6 +17,7 @@ import { GusSession, GusConfig } from './interfaces/gus-session.interface';
 import {
   createSoapClient,
   callSoapOperation,
+  extractSoapResult,
 } from './gus-soap.helpers';
 
 /**
@@ -200,9 +201,9 @@ export class GusService {
         correlationId,
       });
 
-      // Extract XML data from SOAP result
-      // strong-soap returns the operation result directly
-      const xmlData = result?.DaneSzukajPodmiotyResult || result?.daneszszukajpodmiotyresult || null;
+      // Extract XML data from SOAP result using case-insensitive helper
+      // Handles strong-soap's inconsistent XML parsing (PascalCase vs lowercase)
+      const xmlData = extractSoapResult(result, 'DaneSzukajPodmioty');
 
       if (
         !xmlData ||
@@ -388,8 +389,9 @@ export class GusService {
         correlationId,
       });
 
-      // Extract XML data from SOAP result
-      const xmlData = result?.DanePobierzPelnyRaportResult || result?.danepobierzpelnyraportresult || null;
+      // Extract XML data from SOAP result using case-insensitive helper
+      // Handles strong-soap's inconsistent XML parsing (PascalCase vs lowercase)
+      const xmlData = extractSoapResult(result, 'DanePobierzPelnyRaport');
 
       this.logger.log(`Extracted detailed report data for REGON ${regon}`, {
         xmlDataLength: xmlData ? xmlData.length : 0,
