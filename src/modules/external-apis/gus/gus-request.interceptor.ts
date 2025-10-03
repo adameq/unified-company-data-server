@@ -81,37 +81,6 @@ export class GusRequestInterceptor {
   }
 
   /**
-   * Extract operation name from SOAP envelope XML
-   *
-   * Example SOAP envelope:
-   * <soap:Envelope>
-   *   <soap:Body>
-   *     <ns1:DaneSzukajPodmioty>...</ns1:DaneSzukajPodmioty>
-   *   </soap:Body>
-   * </soap:Envelope>
-   *
-   * @param xml - SOAP envelope XML
-   * @returns Operation name (e.g., "DaneSzukajPodmioty") or null
-   */
-  private extractOperationName(xml: string): string | null {
-    // Try to match operation name in SOAP Body
-    // Pattern: <ns:OperationName> where ns can be any namespace prefix
-    const match = xml.match(/<(?:ns\d+:)?(\w+).*?>/);
-    if (match && this.OPERATION_ACTIONS[match[1]]) {
-      return match[1];
-    }
-
-    // Fallback: try each known operation name
-    for (const operation of Object.keys(this.OPERATION_ACTIONS)) {
-      if (xml.includes(`<${operation}`) || xml.includes(`:${operation}`)) {
-        return operation;
-      }
-    }
-
-    return null;
-  }
-
-  /**
    * Add required headers to SOAP client before request
    *
    * Adds:
