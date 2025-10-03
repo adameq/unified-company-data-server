@@ -1,7 +1,6 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 const request = require('supertest');
-import { AppModule } from '../../src/app.module';
+import { createTestApp, closeTestApp } from '../helpers/test-app-setup';
 import { TEST_NIPS, getTestApiKey } from '../fixtures/test-nips';
 
 describe('Companies Integration Tests', () => {
@@ -9,28 +8,13 @@ describe('Companies Integration Tests', () => {
   const validApiKey = getTestApiKey();
 
   beforeAll(async () => {
-    // Environment validation is now handled by ConfigModule in AppModule
-
-    const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
-
-    app = moduleFixture.createNestApplication();
-
-    // Configure ValidationPipe like in main.ts
-    app.useGlobalPipes(
-      new ValidationPipe({
-        whitelist: true,
-        forbidNonWhitelisted: true,
-        transform: true,
-      }),
-    );
-
-    await app.init();
+    // Create test app with ValidationPipe for integration testing
+    const { app: testApp } = await createTestApp({ withValidationPipe: true });
+    app = testApp;
   });
 
   afterAll(async () => {
-    await app.close();
+    await closeTestApp(app);
   });
 
   describe('POST /api/companies', () => {

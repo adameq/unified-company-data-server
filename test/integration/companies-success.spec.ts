@@ -1,7 +1,6 @@
-import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 const request = require('supertest');
-import { AppModule } from '../../src/app.module';
+import { createTestApp, closeTestApp } from '../helpers/test-app-setup';
 
 /**
  * T011: Integration test for successful NIP lookup
@@ -19,19 +18,16 @@ describe('Integration Tests - Successful Company Lookup', () => {
   let validApiKey: string;
 
   beforeAll(async () => {
-    // Environment validation is now handled by ConfigModule in AppModule
-    validApiKey = 'test-api-key-for-development-at-least-32-characters-long'; // Use known API key from .env
+    // Use known API key from .env
+    validApiKey = 'test-api-key-for-development-at-least-32-characters-long';
 
-    const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
-
-    app = moduleFixture.createNestApplication();
-    await app.init();
+    // Create test app using helper (no ValidationPipe needed for success scenarios)
+    const { app: testApp } = await createTestApp();
+    app = testApp;
   });
 
   afterAll(async () => {
-    await app.close();
+    await closeTestApp(app);
   });
 
   describe('POST /api/companies - Successful Scenarios', () => {

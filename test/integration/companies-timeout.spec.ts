@@ -1,7 +1,6 @@
-import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 const request = require('supertest');
-import { AppModule } from '../../src/app.module';
+import { createTestApp, closeTestApp } from '../helpers/test-app-setup';
 import { TEST_NIPS, getTestApiKey } from '../fixtures/test-nips';
 
 /**
@@ -20,18 +19,13 @@ describe('Integration Tests - Timeout Handling', () => {
   const validApiKey = getTestApiKey();
 
   beforeAll(async () => {
-    // Environment validation is now handled by ConfigModule in AppModule
-
-    const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
-
-    app = moduleFixture.createNestApplication();
-    await app.init();
+    // Create test app using helper
+    const { app: testApp } = await createTestApp();
+    app = testApp;
   });
 
   afterAll(async () => {
-    await app.close();
+    await closeTestApp(app);
   });
 
   describe('Response Time Requirements', () => {

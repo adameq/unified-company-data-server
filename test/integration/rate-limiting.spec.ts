@@ -1,8 +1,7 @@
-import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 const request = require('supertest');
-import { AppModule } from '../../src/app.module';
+import { createTestApp, closeTestApp } from '../helpers/test-app-setup';
 import { TEST_NIPS, getTestApiKey } from '../fixtures/test-nips';
 import type { Environment } from '../../src/config/environment.schema';
 
@@ -24,19 +23,16 @@ describe('Integration Tests - Rate Limiting', () => {
   const validApiKey = getTestApiKey();
 
   beforeAll(async () => {
-    // Environment validation is now handled by ConfigModule in AppModule
-
-    const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
-
-    app = moduleFixture.createNestApplication();
-    configService = app.get(ConfigService);
-    await app.init();
+    // Create test app with ConfigService for rate limit configuration testing
+    const { app: testApp, configService: config } = await createTestApp({
+      withConfigService: true,
+    });
+    app = testApp;
+    configService = config!;
   });
 
   afterAll(async () => {
-    await app.close();
+    await closeTestApp(app);
   });
 
   describe('Rate Limit Configuration Verification', () => {
