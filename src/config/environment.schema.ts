@@ -131,38 +131,45 @@ export const EnvironmentSchema = z
   // Security Configuration
   ENABLE_HELMET: z.coerce.boolean().default(true).describe('Enable Helmet security headers middleware'),
   })
-  .transform((config) => {
+  .superRefine((config, ctx) => {
     // Production safety check: fail fast if using default URLs in production
+    // IMPORTANT: This runs BEFORE .default() is applied, so we check process.env directly
+    // to detect whether user explicitly provided values or Zod will use defaults
     if (config.NODE_ENV === 'production') {
       const usingDefaults: string[] = [];
 
+      // Check raw process.env to detect missing explicit configuration
       if (!process.env.GUS_BASE_URL) usingDefaults.push('GUS_BASE_URL');
       if (!process.env.GUS_WSDL_URL) usingDefaults.push('GUS_WSDL_URL');
       if (!process.env.KRS_BASE_URL) usingDefaults.push('KRS_BASE_URL');
       if (!process.env.CEIDG_BASE_URL) usingDefaults.push('CEIDG_BASE_URL');
 
       if (usingDefaults.length > 0) {
-        throw new Error(
-          'Production environment detected with default API URLs! ' +
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            'Production environment detected with default API URLs! ' +
             'The following environment variables are using default values: ' +
             usingDefaults.join(', ') +
             '. This is a security risk. Please explicitly set these variables ' +
             'in your production environment to avoid unintended API connections.',
-        );
+        });
       }
 
       // CORS security check for production
+      // Note: CORS_ALLOWED_ORIGINS has .transform() that runs before this .superRefine()
+      // So config.CORS_ALLOWED_ORIGINS is already an array at this point
       if (config.CORS_ALLOWED_ORIGINS.includes('*')) {
-        throw new Error(
-          'CORS_ALLOWED_ORIGINS="*" not allowed in production environment. ' +
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            'CORS_ALLOWED_ORIGINS="*" not allowed in production environment. ' +
             'Allowing all origins creates CSRF vulnerability. ' +
             'Please set CORS_ALLOWED_ORIGINS to a comma-separated list of allowed domains. ' +
             'Example: CORS_ALLOWED_ORIGINS=https://yourapp.com,https://api.yourapp.com',
-        );
+        });
       }
     }
-
-    return config;
   });
 
 export type Environment = z.infer<typeof EnvironmentSchema>;
