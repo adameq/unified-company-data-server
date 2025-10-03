@@ -99,6 +99,13 @@ export class HttpExceptionHandler implements ExceptionHandler {
       return false;
     }
 
+    // CRITICAL: Explicitly exclude BusinessException
+    // BusinessException extends HttpException, but has its own dedicated handler
+    // This ensures separation of responsibility regardless of handler priorities
+    if (exception instanceof BusinessException) {
+      return false;
+    }
+
     // Skip if already an ErrorResponse
     const response = exception.getResponse();
     if (typeof response === 'object' && response && 'errorCode' in response) {
