@@ -46,7 +46,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const errorResponse = handler.handle(exception, correlationId);
 
     // Map ErrorCode to HTTP status
-    const statusCode = getHttpStatusForErrorCode(errorResponse.errorCode);
+    const statusCode = getHttpStatusForErrorCode(errorResponse.errorCode as any);
 
     // Send error response
     response.status(statusCode).json(errorResponse);

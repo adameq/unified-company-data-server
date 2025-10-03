@@ -1,6 +1,6 @@
 import { Injectable, Logger, Inject, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createActor, fromPromise, toPromise } from 'xstate';
+import { createActor, fromPromise, toPromise, type AnyActorRef } from 'xstate';
 import { z } from 'zod';
 import { UnifiedCompanyDataSchema } from '../../../schemas/unified-company-data.schema';
 import {
@@ -136,6 +136,7 @@ export class OrchestrationService implements OnModuleInit {
             this.machineConfig.retry.gus, // Use pre-built config
           ).provide({
             actors: {
+              // @ts-expect-error - XState v5 type inference issue with fromPromise in nested actors
               makeApiRequest: fromPromise(async ({ input: actorInput }: any) => {
                 const { context: retryContext } = actorInput;
                 const nip = (retryContext as any).nip;
@@ -178,6 +179,7 @@ export class OrchestrationService implements OnModuleInit {
             this.machineConfig.retry.gus,
           ).provide({
             actors: {
+              // @ts-expect-error - XState v5 type inference issue with fromPromise in nested actors
               makeApiRequest: fromPromise(async ({ input: actorInput }: any) => {
                 const { context: retryContext } = actorInput;
                 return this.gusService.getDetailedReport(
@@ -222,6 +224,7 @@ export class OrchestrationService implements OnModuleInit {
             this.machineConfig.retry.krs,
           ).provide({
             actors: {
+              // @ts-expect-error - XState v5 type inference issue with fromPromise in nested actors
               makeApiRequest: fromPromise(async ({ input: actorInput }: any) => {
                 const { context: retryContext } = actorInput;
                 return this.krsService.fetchFromRegistry(
@@ -266,6 +269,7 @@ export class OrchestrationService implements OnModuleInit {
             this.machineConfig.retry.ceidg,
           ).provide({
             actors: {
+              // @ts-expect-error - XState v5 type inference issue with fromPromise in nested actors
               makeApiRequest: fromPromise(async ({ input: actorInput }: any) => {
                 const { context: retryContext } = actorInput;
                 return this.ceidgService.getCompanyByNip(
@@ -419,13 +423,7 @@ export class OrchestrationService implements OnModuleInit {
    * Timeout is handled by the state machine itself via 'after' transitions
    */
   private async waitForCompletion(
-    actor: {
-      stop: () => void;
-      subscribe: (callback: (snapshot: any) => void) => {
-        unsubscribe: () => void;
-      };
-      getSnapshot: () => any;
-    },
+    actor: AnyActorRef,
     correlationId: string,
   ): Promise<UnifiedCompanyData> {
     try {

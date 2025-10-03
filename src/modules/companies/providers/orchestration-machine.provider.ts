@@ -41,6 +41,14 @@ export interface OrchestrationMachineInput {
   logger: Logger;
 }
 
+/**
+ * Full context type (base context + injected config/logger)
+ */
+type FullOrchestrationContext = OrchestrationContext & {
+  config: OrchestrationMachineConfig;
+  logger: Logger;
+};
+
 
 /**
  * Base Orchestration Machine (stub implementations)
@@ -444,7 +452,7 @@ export const baseOrchestrationMachine = setup({
       invoke: {
         id: 'gusClassification',
         src: 'retryGusClassification',
-        input: ({ context }) => ({
+        input: ({ context }: { context: FullOrchestrationContext }) => ({
           nip: context.nip,
           correlationId: context.correlationId,
         }),
@@ -520,7 +528,7 @@ export const baseOrchestrationMachine = setup({
       invoke: {
         id: 'gusFullReport',
         src: 'retryGusDetailedData',
-        input: ({ context }) => ({
+        input: ({ context }: { context: FullOrchestrationContext }) => ({
           regon: context.classification!.Regon,
           silosId: context.classification!.silosId || context.classification!.SilosID,
           correlationId: context.correlationId,
@@ -551,7 +559,7 @@ export const baseOrchestrationMachine = setup({
       invoke: {
         id: 'krsDataFromP',
         src: 'retryKrsData',
-        input: ({ context }) => ({
+        input: ({ context }: { context: FullOrchestrationContext }) => ({
           krsNumber: context.krsNumber,
           registry: 'P' as const,
           correlationId: context.correlationId,
@@ -585,7 +593,7 @@ export const baseOrchestrationMachine = setup({
       invoke: {
         id: 'krsDataFromS',
         src: 'retryKrsData',
-        input: ({ context }) => ({
+        input: ({ context }: { context: FullOrchestrationContext }) => ({
           krsNumber: context.krsNumber,
           registry: 'S' as const,
           correlationId: context.correlationId,
@@ -609,7 +617,7 @@ export const baseOrchestrationMachine = setup({
       invoke: {
         id: 'ceidgData',
         src: 'retryCeidgData',
-        input: ({ context }) => ({
+        input: ({ context }: { context: FullOrchestrationContext }) => ({
           nip: context.nip,
           correlationId: context.correlationId,
         }),
@@ -632,7 +640,7 @@ export const baseOrchestrationMachine = setup({
       invoke: {
         id: 'gusGenericData',
         src: 'retryGusDetailedData',
-        input: ({ context }) => ({
+        input: ({ context }: { context: FullOrchestrationContext }) => ({
           regon: context.classification!.Regon,
           silosId: context.classification!.silosId || context.classification!.SilosID,
           correlationId: context.correlationId,
@@ -656,7 +664,7 @@ export const baseOrchestrationMachine = setup({
       invoke: {
         id: 'gusDetailedFallback',
         src: 'retryGusDetailedData',
-        input: ({ context }) => ({
+        input: ({ context }: { context: FullOrchestrationContext }) => ({
           regon: context.classification!.Regon,
           silosId: context.classification!.silosId || context.classification!.SilosID,
           correlationId: context.correlationId,
@@ -680,7 +688,7 @@ export const baseOrchestrationMachine = setup({
       invoke: {
         id: 'inactiveMapping',
         src: 'mapInactiveCompany',
-        input: ({ context }) => context,
+        input: ({ context }: { context: FullOrchestrationContext }) => context,
         onDone: {
           target: 'success',
           actions: ['saveFinalData', 'logMappingSuccess'],
@@ -700,7 +708,7 @@ export const baseOrchestrationMachine = setup({
       invoke: {
         id: 'dataMapping',
         src: 'mapToUnifiedFormat',
-        input: ({ context }) => context,
+        input: ({ context }: { context: FullOrchestrationContext }) => context,
         onDone: {
           target: 'success',
           actions: ['saveFinalData', 'logMappingSuccess'],
