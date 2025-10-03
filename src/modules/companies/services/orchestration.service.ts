@@ -121,19 +121,21 @@ export class OrchestrationService {
             });
 
             const actor = createActor(retryMachine, { input });
-            actor.start();
 
-            // Wait for completion and check final state
-            // toPromise() resolves for ANY final state, so we need to check success/failure manually
-            await toPromise(actor);
-            const finalSnapshot = actor.getSnapshot();
-
-            if (finalSnapshot.value === 'success') {
-              return finalSnapshot.output ?? finalSnapshot.context?.result;
-            } else {
-              // Retry machine failed - throw the error
-              throw finalSnapshot.output || finalSnapshot.context?.lastError || new Error('GUS retry failed');
-            }
+            return new Promise((resolve, reject) => {
+              actor.subscribe({
+                complete: () => {
+                  const snapshot = actor.getSnapshot();
+                  if (snapshot.value === 'success') {
+                    resolve(snapshot.output ?? snapshot.context?.result);
+                  } else {
+                    reject(snapshot.output || snapshot.context?.lastError || new Error('GUS retry failed'));
+                  }
+                },
+                error: (err) => reject(err),
+              });
+              actor.start();
+            });
           }),
 
           // GUS Detailed Data with retry logic via state machine
@@ -152,16 +154,21 @@ export class OrchestrationService {
             });
 
             const actor = createActor(retryMachine, { input });
-            actor.start();
 
-            await toPromise(actor);
-            const finalSnapshot = actor.getSnapshot();
-
-            if (finalSnapshot.value === 'success') {
-              return finalSnapshot.output ?? finalSnapshot.context?.result;
-            } else {
-              throw finalSnapshot.output || finalSnapshot.context?.lastError || new Error('GUS detailed data retry failed');
-            }
+            return new Promise((resolve, reject) => {
+              actor.subscribe({
+                complete: () => {
+                  const snapshot = actor.getSnapshot();
+                  if (snapshot.value === 'success') {
+                    resolve(snapshot.output ?? snapshot.context?.result);
+                  } else {
+                    reject(snapshot.output || snapshot.context?.lastError || new Error('GUS detailed data retry failed'));
+                  }
+                },
+                error: (err) => reject(err),
+              });
+              actor.start();
+            });
           }),
 
           // KRS Data with retry logic via state machine
@@ -180,16 +187,21 @@ export class OrchestrationService {
             });
 
             const actor = createActor(retryMachine, { input });
-            actor.start();
 
-            await toPromise(actor);
-            const finalSnapshot = actor.getSnapshot();
-
-            if (finalSnapshot.value === 'success') {
-              return finalSnapshot.output ?? finalSnapshot.context?.result;
-            } else {
-              throw finalSnapshot.output || finalSnapshot.context?.lastError || new Error('KRS retry failed');
-            }
+            return new Promise((resolve, reject) => {
+              actor.subscribe({
+                complete: () => {
+                  const snapshot = actor.getSnapshot();
+                  if (snapshot.value === 'success') {
+                    resolve(snapshot.output ?? snapshot.context?.result);
+                  } else {
+                    reject(snapshot.output || snapshot.context?.lastError || new Error('KRS retry failed'));
+                  }
+                },
+                error: (err) => reject(err),
+              });
+              actor.start();
+            });
           }),
 
           // CEIDG Data with retry logic via state machine
@@ -207,16 +219,21 @@ export class OrchestrationService {
             });
 
             const actor = createActor(retryMachine, { input });
-            actor.start();
 
-            await toPromise(actor);
-            const finalSnapshot = actor.getSnapshot();
-
-            if (finalSnapshot.value === 'success') {
-              return finalSnapshot.output ?? finalSnapshot.context?.result;
-            } else {
-              throw finalSnapshot.output || finalSnapshot.context?.lastError || new Error('CEIDG retry failed');
-            }
+            return new Promise((resolve, reject) => {
+              actor.subscribe({
+                complete: () => {
+                  const snapshot = actor.getSnapshot();
+                  if (snapshot.value === 'success') {
+                    resolve(snapshot.output ?? snapshot.context?.result);
+                  } else {
+                    reject(snapshot.output || snapshot.context?.lastError || new Error('CEIDG retry failed'));
+                  }
+                },
+                error: (err) => reject(err),
+              });
+              actor.start();
+            });
           }),
 
           // Inactive company mapping (no retry needed)
