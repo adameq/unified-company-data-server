@@ -37,12 +37,6 @@ export const TEST_NIPS = {
    * Expected: 400 Bad Request with INVALID_NIP_FORMAT error code
    */
   INVALID_WITH_LETTERS: '123ABC7890',
-
-  /**
-   * Null value (for testing validation)
-   * Expected: 400 Bad Request
-   */
-  NULL: null as any,
 } as const;
 
 /**
