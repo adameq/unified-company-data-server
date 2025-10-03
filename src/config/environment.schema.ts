@@ -127,6 +127,9 @@ export const EnvironmentSchema = z
       return str.split(',').map((origin) => origin.trim()).filter(Boolean);
     })
     .describe('Comma-separated list of allowed CORS origins. Use "*" for all origins (not recommended).'),
+
+  // Security Configuration
+  ENABLE_HELMET: z.coerce.boolean().default(true).describe('Enable Helmet security headers middleware'),
   })
   .transform((config) => {
     // Production safety check: fail fast if using default URLs in production

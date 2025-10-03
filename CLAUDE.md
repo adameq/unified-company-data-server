@@ -406,7 +406,58 @@ The orchestration workflow:
 
 ### Security and Authentication
 
-The application implements **global security guards** for authentication and rate limiting:
+The application implements **comprehensive security layers** including HTTP security headers, authentication, and rate limiting:
+
+#### HTTP Security Headers (Helmet.js)
+
+**Implementation**: `helmet.config.ts` with production-grade security headers
+
+- **Status**: ✅ **ACTIVE** by default (configurable via `ENABLE_HELMET` env var)
+- **Configuration**: Restrictive Content Security Policy (CSP) + comprehensive security headers
+- **Location**: `src/config/helmet.config.ts`
+
+**Security Headers Applied**:
+
+1. **Content-Security-Policy (CSP)**:
+   - `default-src 'self'`: Only same-origin resources allowed
+   - `frame-ancestors 'none'`: Prevents clickjacking attacks
+   - `upgrade-insecure-requests`: Forces HTTPS for all resources
+   - Special Swagger mode: Relaxed CSP when Swagger UI is enabled
+
+2. **Strict-Transport-Security (HSTS)**:
+   - `max-age: 31536000` (1 year)
+   - `includeSubDomains: true`
+   - `preload: true` (eligible for browser HSTS preload lists)
+
+3. **Additional Security Headers**:
+   - `X-Frame-Options: DENY` - Prevents iframe embedding
+   - `X-Content-Type-Options: nosniff` - Prevents MIME sniffing
+   - `Referrer-Policy: no-referrer` - Prevents information leakage
+   - `Cross-Origin-*-Policy: same-origin` - Protects against Spectre/Meltdown
+   - `X-XSS-Protection: 1` - Legacy browser XSS protection
+
+**Benefits**:
+- ✅ Defense-in-depth against XSS (Cross-Site Scripting)
+- ✅ Clickjacking protection via frame-ancestors
+- ✅ MIME sniffing prevention
+- ✅ Force HTTPS connections via HSTS
+- ✅ Protection against Spectre/Meltdown attacks
+- ✅ OWASP Security Headers compliance
+
+**Configuration**:
+```bash
+# Enable/disable Helmet (default: true)
+ENABLE_HELMET=true
+```
+
+**API Response Headers Example**:
+```
+Content-Security-Policy: default-src 'self'; frame-ancestors 'none'; ...
+Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+X-Frame-Options: DENY
+X-Content-Type-Options: nosniff
+Referrer-Policy: no-referrer
+```
 
 #### API Key Authentication (Active in ALL Environments)
 

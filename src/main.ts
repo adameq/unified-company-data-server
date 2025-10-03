@@ -5,6 +5,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { Environment } from './config/environment.schema';
+import { getHelmetConfig, getHelmetSecuritySummary } from './config/helmet.config';
 
 async function bootstrap() {
   // Environment validation is now handled by ConfigModule.forRoot({ validate })
@@ -45,8 +46,23 @@ async function bootstrap() {
     allowedOrigins: allowAllOrigins ? ['*'] : allowedOrigins,
   });
 
-  // Security middleware
-  app.use(helmet());
+  // Security middleware - Helmet with comprehensive HTTP security headers
+  const helmetEnabled = configService.get('ENABLE_HELMET', { infer: true });
+  const swaggerEnabled = configService.get('SWAGGER_ENABLED', { infer: true });
+
+  if (helmetEnabled) {
+    const helmetConfig = getHelmetConfig(swaggerEnabled);
+    app.use(helmet(helmetConfig));
+
+    const securitySummary = getHelmetSecuritySummary();
+    logger.log('Helmet security headers enabled:', securitySummary);
+
+    if (swaggerEnabled) {
+      logger.log('Using relaxed CSP for Swagger UI (allows inline styles/scripts)');
+    }
+  } else {
+    logger.warn('⚠️  Helmet security headers DISABLED - not recommended for production');
+  }
 
   // Global validation pipe
   app.useGlobalPipes(
@@ -66,7 +82,6 @@ async function bootstrap() {
   // This ensures it works in both production and tests
 
   // Swagger configuration
-  const swaggerEnabled = configService.get('SWAGGER_ENABLED', { infer: true });
 
   if (swaggerEnabled) {
     const devServerUrl = configService.get('SWAGGER_SERVER_URL_DEVELOPMENT', { infer: true });
