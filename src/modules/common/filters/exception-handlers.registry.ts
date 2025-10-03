@@ -7,7 +7,7 @@ import {
   ERROR_CODES,
 } from '@schemas/error-response.schema';
 import { BusinessException } from '@common/exceptions/business-exceptions';
-import { ValidationErrorStrategy } from './validation-error.strategy';
+import { ValidationException } from '../exceptions/validation.exception';
 
 /**
  * Exception Handler Strategy Pattern
@@ -51,38 +51,20 @@ export class BusinessExceptionHandler implements ExceptionHandler {
 }
 
 /**
- * Handler for NestJS ValidationPipe errors
- * Detects validation errors by checking for array response.message with status 400
+ * Handler for ValidationException (structured validation errors)
+ * Replaces string-based ValidationPipeErrorHandler with constraint-based mapping
  */
-export class ValidationPipeErrorHandler implements ExceptionHandler {
+export class ValidationExceptionHandler implements ExceptionHandler {
   priority = 2;
-  name = 'ValidationPipeErrorHandler';
+  name = 'ValidationExceptionHandler';
 
   canHandle(exception: unknown): boolean {
-    if (!(exception instanceof HttpException)) {
-      return false;
-    }
-
-    const response = exception.getResponse();
-    return (
-      exception.getStatus() === 400 &&
-      typeof response === 'object' &&
-      response !== null &&
-      'message' in response &&
-      Array.isArray(response.message)
-    );
+    return exception instanceof ValidationException;
   }
 
   handle(exception: unknown, correlationId: string): ErrorResponse {
-    const httpException = exception as HttpException;
-    const response = httpException.getResponse() as {
-      message: string[];
-    };
-
-    return ValidationErrorStrategy.createErrorResponse(
-      response.message,
-      correlationId,
-    );
+    const validationException = exception as ValidationException;
+    return validationException.toErrorResponse(correlationId);
   }
 }
 
@@ -99,27 +81,19 @@ export class HttpExceptionHandler implements ExceptionHandler {
       return false;
     }
 
-    // CRITICAL: Explicitly exclude BusinessException
-    // BusinessException extends HttpException, but has its own dedicated handler
-    // This ensures separation of responsibility regardless of handler priorities
+    // CRITICAL: Explicitly exclude specialized exception types
+    // These exceptions extend HttpException but have dedicated handlers
     if (exception instanceof BusinessException) {
+      return false;
+    }
+
+    if (exception instanceof ValidationException) {
       return false;
     }
 
     // Skip if already an ErrorResponse
     const response = exception.getResponse();
     if (typeof response === 'object' && response && 'errorCode' in response) {
-      return false;
-    }
-
-    // Skip ValidationPipe errors (handled by ValidationPipeErrorHandler)
-    if (
-      exception.getStatus() === 400 &&
-      typeof response === 'object' &&
-      response &&
-      'message' in response &&
-      Array.isArray(response.message)
-    ) {
       return false;
     }
 
@@ -334,7 +308,7 @@ export class UnknownExceptionHandler implements ExceptionHandler {
 export class ExceptionHandlerRegistry {
   private static handlers: ExceptionHandler[] = [
     new BusinessExceptionHandler(),
-    new ValidationPipeErrorHandler(),
+    new ValidationExceptionHandler(),
     new HttpExceptionHandler(),
     new ZodErrorHandler(),
     new TimeoutErrorHandler(),
@@ -374,7 +348,7 @@ export class ExceptionHandlerRegistry {
   static reset(): void {
     this.handlers = [
       new BusinessExceptionHandler(),
-      new ValidationPipeErrorHandler(),
+      new ValidationExceptionHandler(),
       new HttpExceptionHandler(),
       new ZodErrorHandler(),
       new TimeoutErrorHandler(),

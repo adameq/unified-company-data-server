@@ -17,6 +17,7 @@ The project is a production-ready microservice with complete external API integr
 - ✅ **Integration tests** covering main user scenarios
 - ✅ **State machine implementation** (XState orchestration active)
 - ✅ **External API integrations** (GUS, KRS, CEIDG services fully implemented)
+- ✅ **Type safety improvements** (eliminated `@ts-expect-error` in orchestration.service.ts)
 - ⏳ **Production deployment** configuration
 
 ## Architecture
@@ -378,6 +379,58 @@ invoke: {
 - `snapshot.output` + `snapshot.context.result` fallback for data retrieval
 - Proper error propagation via `reject()`
 
+#### Known XState v5 TypeScript Limitations
+
+**Issue #1: TS2719 ActionFunction Type Incompatibility** ✅ **RESOLVED**
+
+**Problem**: TypeScript showed 23 TS2719 errors: "Two different types with this name exist, but they are unrelated" for `ActionFunction<...>` types in `orchestration.machine.ts`.
+
+**Root Cause**: TypeScript creates **distinct type identities** for conditional types (like `ActionFunction<...>`) even from the same module when imported across boundaries. This happened because:
+- `orchestration.actions.ts` imports `assign()` from XState → returns `ActionFunction` (type identity #1)
+- `orchestration.machine.ts` imports `setup()` from XState → expects `ActionFunction` (type identity #2)
+- TypeScript treats identity #1 ≠ identity #2 (microsoft/TypeScript#26627)
+
+**Solution**: **Type Alias Pattern** (implemented)
+1. Created `xstate-types.d.ts` with unified `OrchestrationActionFn` type alias
+2. Applied explicit type assertions to all actions in `setup()` block
+3. TypeScript now treats all ActionFunction instances as the same named type
+
+**Files changed**:
+- Added: `src/modules/companies/state-machines/orchestration/xstate-types.d.ts`
+- Modified: `orchestration.machine.ts` (added type assertions for 31 actions)
+
+**Result**: ✅ **Zero TS2719 errors**, full type safety maintained
+
+---
+
+**Issue #2: TS2322 StateNodeConfig Type Incompatibility** ✅ **RESOLVED**
+
+**Problem**: TypeScript showed 16 TS2322 errors: `Type 'string' is not assignable to type '"retryGusClassification"'` for state `src` fields in `orchestration.states.ts`.
+
+**Root Cause**: TypeScript **widened literal types to string** when exporting state objects across module boundaries. This happened because:
+- State exports like `export const fetchingGusClassification = { src: 'retryGusClassification', ... }` lost literal type information
+- TypeScript saw `src: string` instead of `src: 'retryGusClassification'` after import
+- Same root cause as TS2719: type information lost through module boundaries
+
+**Solution**: **Const Assertion Pattern** (implemented)
+1. Added `as const` to all 16 state exports in `orchestration.states.ts`
+2. This preserves literal types across module imports
+3. TypeScript now correctly recognizes `src: 'retryGusClassification'` as a literal type
+
+**Files changed**:
+- Modified: `src/modules/companies/state-machines/orchestration/orchestration.states.ts` (added `as const` to 16 states)
+
+**Result**: ✅ **Zero TS2322 errors**, literal types preserved across module boundaries
+
+**Verification**:
+```bash
+# TypeScript type checking (zero errors)
+pnpm exec tsc --noEmit
+
+# Integration tests (all passing)
+NODE_ENV=development pnpm test test/integration/
+```
+
 ### Production API Integration
 
 The service uses **real Polish government APIs** for data retrieval:
@@ -492,7 +545,7 @@ Referrer-Policy: no-referrer
 - **Status**: ✅ **ACTIVE** in development, test, and production
 - **Requirement**: All endpoints require `Authorization: Bearer <api-key>` header
 - **Exceptions**: Endpoints marked with `@Public()` decorator (e.g., health checks)
-- **Configuration**: Valid API keys defined in `VALID_API_KEYS` environment variable
+- **Configuration**: Valid API keys defined in `APP_API_KEYS` environment variable
 
 **Error Responses**:
 - `401 MISSING_API_KEY` - No Authorization header provided

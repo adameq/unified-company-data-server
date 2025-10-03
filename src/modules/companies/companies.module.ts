@@ -4,7 +4,7 @@ import { HealthController } from './controllers/health.controller';
 import { OrchestrationService } from './services/orchestration.service';
 import { UnifiedDataMapper } from './mappers/unified-data.mapper';
 import { ExternalApisModule } from '../external-apis/external-apis.module';
-import { OrchestrationMachineProvider } from './providers/orchestration-machine.provider';
+import { OrchestrationMachineProvider } from './state-machines/orchestration/orchestration.provider';
 
 /**
  * Companies Module

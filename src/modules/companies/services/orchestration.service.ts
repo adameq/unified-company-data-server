@@ -3,10 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { createActor, fromPromise, toPromise, type AnyActorRef } from 'xstate';
 import { z } from 'zod';
 import { UnifiedCompanyDataSchema } from '@schemas/unified-company-data.schema';
-import {
-  createErrorResponse,
-  type ErrorResponse,
-} from '@schemas/error-response.schema';
+import { type ErrorResponse } from '@schemas/error-response.schema';
 import { GusService } from '@modules/external-apis/gus/gus.service';
 import { KrsService } from '@modules/external-apis/krs/krs.service';
 import { CeidgV3Service } from '@modules/external-apis/ceidg/ceidg-v3.service';
@@ -16,8 +13,11 @@ import type { Environment } from '@config/environment.schema';
 import {
   ORCHESTRATION_MACHINE,
   type OrchestrationMachineConfig,
-} from '../providers/orchestration-machine.provider';
-import { createRetryMachine } from '../state-machines/retry.machine';
+} from '../state-machines/orchestration/orchestration.provider';
+import {
+  createRetryMachine,
+  type MakeApiRequestInput,
+} from '../state-machines/retry.machine';
 import { GusRetryStrategy } from '../state-machines/strategies/gus-retry.strategy';
 import { KrsRetryStrategy } from '../state-machines/strategies/krs-retry.strategy';
 import { CeidgRetryStrategy } from '../state-machines/strategies/ceidg-retry.strategy';
@@ -28,10 +28,15 @@ import { CeidgRetryStrategy } from '../state-machines/strategies/ceidg-retry.str
  * Responsibilities:
  * - Initialize and manage orchestration state machine
  * - Inject external service dependencies via machine.provide()
- * - Handle state machine execution and error propagation
- * - Convert state machine results to controller responses
+ * - Execute state machine and propagate exceptions to GlobalExceptionFilter
  * - Provide correlation tracking throughout the workflow
  * - Provide health check functionality for external service monitoring
+ *
+ * Error Handling Philosophy:
+ * - All exceptions (BusinessException, ZodError, etc.) are propagated to GlobalExceptionFilter
+ * - No error transformation or formatting in this service (Single Responsibility Principle)
+ * - GlobalExceptionFilter is the single source of truth for error response formatting
+ * - This keeps the service focused on orchestration logic, not error presentation
  *
  * Architecture:
  * - Uses XState v5 setup() + provide() pattern for dependency injection
@@ -138,7 +143,7 @@ export class OrchestrationService implements OnModuleInit {
     return this.baseMachine.provide({
       actors: {
         // GUS Classification with retry logic via state machine
-        retryGusClassification: fromPromise(async ({ input }: any) => {
+        retryGusClassification: fromPromise(async ({ input }: { input: { nip: string; correlationId: string } }) => {
           // correlationId comes from input, not closure
           const { nip, correlationId } = input;
 
@@ -149,10 +154,10 @@ export class OrchestrationService implements OnModuleInit {
             this.machineConfig.retry.gus, // Use pre-built config
           ).provide({
             actors: {
-              // @ts-expect-error - XState v5 type inference issue with fromPromise in nested actors
-              makeApiRequest: fromPromise(async ({ input: actorInput }: any) => {
-                const { context: retryContext } = actorInput;
-                const nip = (retryContext as any).nip;
+              // Explicit type annotation resolves XState v5 type inference limitation
+              makeApiRequest: fromPromise<any, MakeApiRequestInput>(async ({ input }) => {
+                const { context: retryContext } = input;
+                const nip = retryContext.nip!; // Non-null assertion: guaranteed by RetryContext schema
                 const correlationId = retryContext.correlationId;
                 return this.gusService.getClassificationByNip(nip, correlationId);
               }),
@@ -182,7 +187,7 @@ export class OrchestrationService implements OnModuleInit {
         }),
 
         // GUS Detailed Data with retry logic via state machine
-        retryGusDetailedData: fromPromise(async ({ input }: any) => {
+        retryGusDetailedData: fromPromise(async ({ input }: { input: { regon: string; silosId: string; correlationId: string } }) => {
           const { regon, silosId, correlationId } = input;
 
           const retryMachine = createRetryMachine(
@@ -192,12 +197,12 @@ export class OrchestrationService implements OnModuleInit {
             this.machineConfig.retry.gus,
           ).provide({
             actors: {
-              // @ts-expect-error - XState v5 type inference issue with fromPromise in nested actors
-              makeApiRequest: fromPromise(async ({ input: actorInput }: any) => {
-                const { context: retryContext } = actorInput;
+              // Explicit type annotation resolves XState v5 type inference limitation
+              makeApiRequest: fromPromise<any, MakeApiRequestInput>(async ({ input }) => {
+                const { context: retryContext } = input;
                 return this.gusService.getDetailedReport(
-                  (retryContext as any).regon,
-                  (retryContext as any).silosId,
+                  retryContext.regon!,
+                  retryContext.silosId!,
                   retryContext.correlationId,
                 );
               }),
@@ -228,7 +233,7 @@ export class OrchestrationService implements OnModuleInit {
         }),
 
         // KRS Data with retry logic via state machine
-        retryKrsData: fromPromise(async ({ input }: any) => {
+        retryKrsData: fromPromise(async ({ input }: { input: { krsNumber: string; registry: 'P' | 'S'; correlationId: string } }) => {
           const { krsNumber, registry, correlationId } = input;
 
           const retryMachine = createRetryMachine(
@@ -238,12 +243,12 @@ export class OrchestrationService implements OnModuleInit {
             this.machineConfig.retry.krs,
           ).provide({
             actors: {
-              // @ts-expect-error - XState v5 type inference issue with fromPromise in nested actors
-              makeApiRequest: fromPromise(async ({ input: actorInput }: any) => {
-                const { context: retryContext } = actorInput;
+              // Explicit type annotation resolves XState v5 type inference limitation
+              makeApiRequest: fromPromise<any, MakeApiRequestInput>(async ({ input }) => {
+                const { context: retryContext } = input;
                 return this.krsService.fetchFromRegistry(
-                  (retryContext as any).krsNumber,
-                  (retryContext as any).registry,
+                  retryContext.krsNumber!,
+                  retryContext.registry!,
                   retryContext.correlationId,
                 );
               }),
@@ -282,7 +287,7 @@ export class OrchestrationService implements OnModuleInit {
         }),
 
         // CEIDG Data with retry logic via state machine
-        retryCeidgData: fromPromise(async ({ input }: any) => {
+        retryCeidgData: fromPromise(async ({ input }: { input: { nip: string; correlationId: string } }) => {
           const { nip, correlationId } = input;
 
           const retryMachine = createRetryMachine(
@@ -292,11 +297,11 @@ export class OrchestrationService implements OnModuleInit {
             this.machineConfig.retry.ceidg,
           ).provide({
             actors: {
-              // @ts-expect-error - XState v5 type inference issue with fromPromise in nested actors
-              makeApiRequest: fromPromise(async ({ input: actorInput }: any) => {
-                const { context: retryContext } = actorInput;
+              // Explicit type annotation resolves XState v5 type inference limitation
+              makeApiRequest: fromPromise<any, MakeApiRequestInput>(async ({ input }) => {
+                const { context: retryContext } = input;
                 return this.ceidgService.getCompanyByNip(
-                  (retryContext as any).nip,
+                  retryContext.nip!,
                   retryContext.correlationId,
                 );
               }),
@@ -326,7 +331,7 @@ export class OrchestrationService implements OnModuleInit {
         }),
 
         // Inactive company mapping (no retry needed)
-        mapInactiveCompany: fromPromise(async ({ input }: any) => {
+        mapInactiveCompany: fromPromise(async ({ input }: { input: { nip: string; correlationId: string; classification: any } }) => {
           const context = input;
           this.logger.log('mapInactiveCompany started', {
             correlationId: context.correlationId,
@@ -346,7 +351,7 @@ export class OrchestrationService implements OnModuleInit {
         }),
 
         // Unified data mapping (no retry needed)
-        mapToUnifiedFormat: fromPromise(async ({ input }: any) => {
+        mapToUnifiedFormat: fromPromise(async ({ input }: { input: { nip: string; correlationId: string; classification: any; gusData?: any; krsData?: any; ceidgData?: any } }) => {
           const context = input;
           this.logger.log('mapToUnifiedFormat started', {
             correlationId: context.correlationId,
@@ -370,6 +375,9 @@ export class OrchestrationService implements OnModuleInit {
   /**
    * Main entry point for company data retrieval
    * Orchestrates the complete workflow using state machine
+   *
+   * All exceptions are propagated to GlobalExceptionFilter which handles
+   * standardization and HTTP status mapping. No error transformation here.
    */
   async getCompanyData(
     nip: string,
@@ -384,60 +392,33 @@ export class OrchestrationService implements OnModuleInit {
       },
     );
 
-    try {
-      // Create actor from pre-configured machine (configured once at module init)
-      // No per-request machine configuration overhead
-      const actor = createActor(this.configuredMachine, {
-        input: {
-          nip,
-          correlationId,
-          config: this.machineConfig,
-          logger: this.logger,
-        },
-      });
-      actor.start();
-
-      this.logger.log(`🎯 XState machine started, waiting for completion`, {
-        correlationId,
-      });
-      const result = await this.waitForCompletion(actor, correlationId);
-
-      this.logger.log(`✅ XState orchestration completed successfully`, {
+    // Create actor from pre-configured machine (configured once at module init)
+    // No per-request machine configuration overhead
+    const actor = createActor(this.configuredMachine, {
+      input: {
         nip,
         correlationId,
-        companyName: result.nazwa,
-        dataSource: result.zrodloDanych,
-        architecture: 'XState-based',
-      });
+        config: this.machineConfig,
+        logger: this.logger,
+      },
+    });
+    actor.start();
 
-      return result;
-    } catch (error) {
-      this.logger.error(`Company data orchestration failed`, {
-        nip,
-        correlationId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+    this.logger.log(`🎯 XState machine started, waiting for completion`, {
+      correlationId,
+    });
 
-      // If already BusinessException (from external services), re-throw as-is
-      if (error instanceof BusinessException) {
-        throw error;
-      }
+    const result = await this.waitForCompletion(actor, correlationId);
 
-      // If error has ErrorResponse structure (from XState), convert to BusinessException
-      if (this.isErrorResponse(error)) {
-        throw new BusinessException(error);
-      }
+    this.logger.log(`✅ XState orchestration completed successfully`, {
+      nip,
+      correlationId,
+      companyName: result.nazwa,
+      dataSource: result.zrodloDanych,
+      architecture: 'XState-based',
+    });
 
-      // Unknown errors - convert to standardized format
-      const errorResponse = createErrorResponse({
-        errorCode: 'INTERNAL_SERVER_ERROR',
-        message: error instanceof Error ? error.message : 'Orchestration failed',
-        correlationId,
-        source: 'INTERNAL',
-      });
-
-      throw new BusinessException(errorResponse);
-    }
+    return result;
   }
 
   /**
@@ -447,93 +428,46 @@ export class OrchestrationService implements OnModuleInit {
    * The machine defines output for all final states (success, failure states).
    * Success state outputs UnifiedCompanyData, failure states output ErrorResponse.
    *
+   * All exceptions (BusinessException, ZodError, etc.) are propagated to GlobalExceptionFilter
+   * which handles standardization and HTTP status mapping.
+   *
    * @param actor - XState actor to wait for
    * @param correlationId - Request correlation ID for logging
    * @returns UnifiedCompanyData on success
-   * @throws BusinessException with ErrorResponse on failure states
+   * @throws BusinessException for failure states, ZodError for validation errors
    */
   private async waitForCompletion(
     actor: AnyActorRef,
     correlationId: string,
   ): Promise<UnifiedCompanyData> {
-    try {
-      // XState v5: toPromise() waits for final state, output is in snapshot.output
-      await toPromise(actor);
+    // XState v5: toPromise() waits for final state, output is in snapshot.output
+    await toPromise(actor);
 
-      const snapshot = actor.getSnapshot();
-      this.logger.debug('State machine completed', {
-        correlationId,
-        finalState: snapshot.value,
-        status: snapshot.status,
-      });
+    const snapshot = actor.getSnapshot();
+    this.logger.debug('State machine completed', {
+      correlationId,
+      finalState: snapshot.value,
+      status: snapshot.status,
+    });
 
-      // Get output from snapshot (defined by machine's output: ({ context }) => ...)
-      // For success state: Use output or finalCompanyData (skip lastError)
-      // For failure states: Use output or lastError
-      const output = snapshot.output ??
-                     (snapshot.value === 'success'
-                       ? snapshot.context?.finalCompanyData
-                       : snapshot.context?.lastError);
+    // Get output from snapshot (defined by machine's output: ({ context }) => ...)
+    // For success state: Use output or finalCompanyData (skip lastError)
+    // For failure states: Use output or lastError
+    const output = snapshot.output ??
+                   (snapshot.value === 'success'
+                     ? snapshot.context?.finalCompanyData
+                     : snapshot.context?.lastError);
 
-      // Check if output is an error (failure states: entityNotFoundFailure, mappingFailure, etc.)
-      // ErrorResponse has 'errorCode' field, UnifiedCompanyData has 'nip' field
-      if (this.isErrorResponse(output)) {
-        throw new BusinessException(output);
-      }
-
-      // Success state - validate and return UnifiedCompanyData
-      try {
-        return UnifiedCompanyDataSchema.parse(output);
-      } catch (validationError) {
-        this.logger.error('Output validation failed', {
-          correlationId,
-          validationError:
-            validationError instanceof Error
-              ? validationError.message
-              : String(validationError),
-        });
-
-        throw new BusinessException(
-          createErrorResponse({
-            errorCode: 'DATA_MAPPING_FAILED',
-            message: 'Failed to validate unified company data',
-            correlationId,
-            source: 'INTERNAL',
-            details: {
-              validationError:
-                validationError instanceof Error
-                  ? validationError.message
-                  : String(validationError),
-            },
-          }),
-        );
-      }
-    } catch (error) {
-      // Re-throw BusinessException (from error states or validation failure)
-      if (error instanceof BusinessException) {
-        throw error;
-      }
-
-      // Handle unexpected errors (should not happen in normal flow)
-      const snapshot = actor.getSnapshot();
-
-      this.logger.error('Unexpected error in waitForCompletion', {
-        correlationId,
-        finalState: snapshot.value,
-        status: snapshot.status,
-        error: error instanceof Error ? error.message : String(error),
-      });
-
-      throw new BusinessException(
-        createErrorResponse({
-          errorCode: 'ORCHESTRATION_FAILED',
-          message: error instanceof Error ? error.message : 'Orchestration failed',
-          correlationId,
-          source: 'INTERNAL',
-          details: { finalState: snapshot.value },
-        }),
-      );
+    // Check if output is an error (failure states: entityNotFoundFailure, mappingFailure, etc.)
+    // ErrorResponse has 'errorCode' field, UnifiedCompanyData has 'nip' field
+    // Throw BusinessException - GlobalExceptionFilter will handle it via BusinessExceptionHandler
+    if (this.isErrorResponse(output)) {
+      throw new BusinessException(output);
     }
+
+    // Success state - validate and return UnifiedCompanyData
+    // If validation fails, Zod throws ZodError which GlobalExceptionFilter handles via ZodErrorHandler
+    return UnifiedCompanyDataSchema.parse(output);
   }
 
   /**

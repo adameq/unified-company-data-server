@@ -1,4 +1,5 @@
 import { soap } from 'strong-soap';
+import type { GusSoapClient } from '../gus-soap-client.facade';
 
 /**
  * GUS Session representation
@@ -6,12 +7,14 @@ import { soap } from 'strong-soap';
  * Represents an active GUS SOAP session with:
  * - sessionId: Unique session identifier from GUS API
  * - expiresAt: Session expiration timestamp
- * - client: strong-soap SOAP client with active session
+ * - soapClient: Facade for SOAP operations with automatic header injection
+ * - rawClient: Underlying strong-soap client (for internal use only)
  */
 export interface GusSession {
   sessionId: string;
   expiresAt: Date;
-  client: soap.Client;
+  soapClient: GusSoapClient;
+  rawClient: soap.Client;
 }
 
 /**

@@ -64,17 +64,21 @@ async function bootstrap() {
     logger.warn('⚠️  Helmet security headers DISABLED - not recommended for production');
   }
 
-  // Global validation pipe
+  // Global validation pipe with custom AppValidationPipe
+  // AppValidationPipe extends ValidationPipe to ensure ALL validation errors
+  // (including whitelist violations) are converted to structured ValidationException
+  const { AppValidationPipe } = await import(
+    './modules/common/pipes/app-validation.pipe.js'
+  );
+
   app.useGlobalPipes(
-    new ValidationPipe({
+    new AppValidationPipe({
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
       stopAtFirstError: false, // Collect all validation errors
       forbidUnknownValues: true,
       validateCustomDecorators: true,
-      // No custom exceptionFactory - use default BadRequestException
-      // GlobalExceptionFilter handles validation errors automatically
     }),
   );
 

@@ -21,7 +21,7 @@ describe('EnvironmentSchema', () => {
         PORT: '3000',
         GUS_USER_KEY: 'test_key_12345678901234567890',
         CEIDG_JWT_TOKEN: 'test_jwt_1234567890123456789012345678901234567890123456',
-        VALID_API_KEYS: 'dev_api_key_1234567890abcdef1234567890abcdef',
+        APP_API_KEYS: 'dev_api_key_1234567890abcdef1234567890abcdef',
         APP_CORS_ALLOWED_ORIGINS: 'http://localhost:3000,http://localhost:5173',
       };
 
@@ -40,7 +40,7 @@ describe('EnvironmentSchema', () => {
         PORT: '3000',
         GUS_USER_KEY: 'test_key_12345678901234567890',
         CEIDG_JWT_TOKEN: 'test_jwt_1234567890123456789012345678901234567890123456',
-        VALID_API_KEYS: 'dev_api_key_1234567890abcdef1234567890abcdef',
+        APP_API_KEYS: 'dev_api_key_1234567890abcdef1234567890abcdef',
         APP_CORS_ALLOWED_ORIGINS: '*',
       };
 
@@ -56,7 +56,7 @@ describe('EnvironmentSchema', () => {
         PORT: '3000',
         GUS_USER_KEY: 'test_key_12345678901234567890',
         CEIDG_JWT_TOKEN: 'test_jwt_1234567890123456789012345678901234567890123456',
-        VALID_API_KEYS: 'dev_api_key_1234567890abcdef1234567890abcdef',
+        APP_API_KEYS: 'dev_api_key_1234567890abcdef1234567890abcdef',
         APP_CORS_ALLOWED_ORIGINS: 'http://localhost:3000, http://localhost:5173 , http://127.0.0.1:3000',
       };
 
@@ -74,7 +74,7 @@ describe('EnvironmentSchema', () => {
         NODE_ENV: 'development',
         GUS_USER_KEY: 'test_key_12345678901234567890',
         CEIDG_JWT_TOKEN: 'test_jwt_1234567890123456789012345678901234567890123456',
-        VALID_API_KEYS: 'dev_api_key_1234567890abcdef1234567890abcdef',
+        APP_API_KEYS: 'dev_api_key_1234567890abcdef1234567890abcdef',
       };
 
       const result = EnvironmentSchema.parse(config);
@@ -231,7 +231,7 @@ describe('EnvironmentSchema', () => {
         NODE_ENV: 'development',
         // Missing: GUS_USER_KEY
         CEIDG_JWT_TOKEN: 'test_jwt_1234567890123456789012345678901234567890123456',
-        VALID_API_KEYS: 'dev_api_key_1234567890abcdef1234567890abcdef',
+        APP_API_KEYS: 'dev_api_key_1234567890abcdef1234567890abcdef',
       };
 
       expect(() => EnvironmentSchema.parse(config)).toThrow();
@@ -242,7 +242,7 @@ describe('EnvironmentSchema', () => {
         NODE_ENV: 'development',
         GUS_USER_KEY: 'test_key_12345678901234567890',
         // Missing: CEIDG_JWT_TOKEN
-        VALID_API_KEYS: 'dev_api_key_1234567890abcdef1234567890abcdef',
+        APP_API_KEYS: 'dev_api_key_1234567890abcdef1234567890abcdef',
       };
 
       expect(() => EnvironmentSchema.parse(config)).toThrow();
@@ -294,7 +294,7 @@ describe('EnvironmentSchema', () => {
         PORT: '8080', // String input
         GUS_USER_KEY: 'test_key_12345678901234567890',
         CEIDG_JWT_TOKEN: 'test_jwt_1234567890123456789012345678901234567890123456',
-        VALID_API_KEYS: 'dev_api_key_1234567890abcdef1234567890abcdef',
+        APP_API_KEYS: 'dev_api_key_1234567890abcdef1234567890abcdef',
       };
 
       const result = EnvironmentSchema.parse(config);
@@ -308,7 +308,7 @@ describe('EnvironmentSchema', () => {
         NODE_ENV: 'development',
         GUS_USER_KEY: 'test_key_12345678901234567890',
         CEIDG_JWT_TOKEN: 'test_jwt_1234567890123456789012345678901234567890123456',
-        VALID_API_KEYS: 'dev_api_key_1234567890abcdef1234567890abcdef',
+        APP_API_KEYS: 'dev_api_key_1234567890abcdef1234567890abcdef',
         // Not providing HEALTH_CHECK_ENABLED, SWAGGER_ENABLED
       };
 
@@ -325,7 +325,7 @@ describe('EnvironmentSchema', () => {
         PORT: '0', // ❌ Below minimum
         GUS_USER_KEY: 'test_key_12345678901234567890',
         CEIDG_JWT_TOKEN: 'test_jwt_1234567890123456789012345678901234567890123456',
-        VALID_API_KEYS: 'dev_api_key_1234567890abcdef1234567890abcdef',
+        APP_API_KEYS: 'dev_api_key_1234567890abcdef1234567890abcdef',
       };
 
       expect(() => EnvironmentSchema.parse(configLow)).toThrow();
@@ -335,7 +335,7 @@ describe('EnvironmentSchema', () => {
         PORT: '99999', // ❌ Above maximum
         GUS_USER_KEY: 'test_key_12345678901234567890',
         CEIDG_JWT_TOKEN: 'test_jwt_1234567890123456789012345678901234567890123456',
-        VALID_API_KEYS: 'dev_api_key_1234567890abcdef1234567890abcdef',
+        APP_API_KEYS: 'dev_api_key_1234567890abcdef1234567890abcdef',
       };
 
       expect(() => EnvironmentSchema.parse(configHigh)).toThrow();
@@ -346,7 +346,7 @@ describe('EnvironmentSchema', () => {
         NODE_ENV: 'development',
         GUS_USER_KEY: 'test_key_12345678901234567890',
         CEIDG_JWT_TOKEN: 'test_jwt_1234567890123456789012345678901234567890123456',
-        VALID_API_KEYS: 'dev_api_key_1234567890abcdef1234567890abcdef',
+        APP_API_KEYS: 'dev_api_key_1234567890abcdef1234567890abcdef',
         GUS_MAX_RETRIES: '10', // ❌ Above maximum (5)
       };
 

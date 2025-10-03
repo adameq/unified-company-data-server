@@ -7,6 +7,8 @@ import {
 } from '@schemas/error-response.schema';
 import { BusinessException } from '@common/exceptions/business-exceptions';
 import type { GusSession, GusConfig } from './interfaces/gus-session.interface';
+import { GusSoapClient } from './gus-soap-client.facade';
+import { GusHeaderManager } from './gus-header.manager';
 import {
   createSoapClient,
   callSimpleSoapOperation,
@@ -55,8 +57,9 @@ export type ZalogujResponse = z.infer<typeof ZalogujResponseSchema>;
  * 4. Store session with expiration time
  * 5. Return active session to caller
  *
- * NOTE: This class does NOT add SOAP headers (WS-Addressing) or HTTP headers (sid).
- *       Headers are managed by GusHeaderManager, which must be called manually before each operation.
+ * NOTE: This class delegates all header management to GusHeaderManager:
+ *       - Login (Zaloguj): Uses GusHeaderManager.addHeadersForLogin()
+ *       - Other operations: GusSoapClient facade calls GusHeaderManager.attach()
  */
 @Injectable()
 export class GusSessionManager {
@@ -146,12 +149,12 @@ export class GusSessionManager {
    *
    * Steps:
    * 1. Create strong-soap client from WSDL
-   * 2. Login via Zaloguj operation (no WS-Addressing headers needed for login)
-   * 3. Extract and validate sessionId
-   * 4. Store session with expiration time
+   * 2. Add WS-Addressing headers via GusHeaderManager.addHeadersForLogin()
+   * 3. Login via Zaloguj operation
+   * 4. Extract and validate sessionId
+   * 5. Store session with expiration time
    *
-   * NOTE: WS-Addressing headers and sid HTTP header are added by GusHeaderManager,
-   *       NOT in this method.
+   * NOTE: All header management is delegated to GusHeaderManager.
    */
   private async createNewSession(correlationId: string): Promise<GusSession> {
     this.logger.log('Creating new GUS session with strong-soap', {
@@ -176,19 +179,11 @@ export class GusSessionManager {
       });
 
       // Step 2: Add WS-Addressing headers for Zaloguj operation
-      // IMPORTANT: Zaloguj DOES require WS-Addressing headers (confirmed from original working code)
-      client.clearSoapHeaders();
-      client.clearHttpHeaders();
-
-      // Add WS-Addressing headers manually for Zaloguj
-      const zalogujAction = 'http://CIS/BIR/PUBL/2014/07/IUslugaBIRzewnPubl/Zaloguj';
-      const WS_ADDRESSING_NS = 'http://www.w3.org/2005/08/addressing';
-      client.addSoapHeader(
-        `<wsa:To xmlns:wsa="${WS_ADDRESSING_NS}">${this.config.baseUrl}</wsa:To>`,
-      );
-      client.addSoapHeader(
-        `<wsa:Action xmlns:wsa="${WS_ADDRESSING_NS}">${zalogujAction}</wsa:Action>`,
-      );
+      // IMPORTANT: Zaloguj DOES require WS-Addressing headers
+      // Use GusHeaderManager to avoid code duplication
+      // (headerManager will be reused later for GusSoapClient facade)
+      const headerManager = new GusHeaderManager(this.config);
+      headerManager.addHeadersForLogin(client);
 
       // Step 3: Perform login using Zaloguj operation (using promisified helper)
       const loginResult = await callSimpleSoapOperation(
@@ -277,16 +272,29 @@ export class GusSessionManager {
         correlationId,
       });
 
-      // Step 5: Store session information
+      // Step 5: Create GusSoapClient facade for automatic header injection
       const expiresAt = new Date(Date.now() + this.config.sessionTimeoutMs);
 
+      // Temporarily store session to pass to GusSoapClient constructor
+      const tempSession: GusSession = {
+        sessionId,
+        expiresAt,
+        rawClient: client,
+        soapClient: null as any, // Will be set immediately below
+      };
+
+      // Reuse headerManager from Step 2 (already created for Zaloguj)
+      const soapClient = new GusSoapClient(client, headerManager, tempSession);
+
+      // Update session with facade
       this.currentSession = {
         sessionId,
         expiresAt,
-        client,
+        rawClient: client,
+        soapClient,
       };
 
-      this.logger.log('GUS session created successfully with strong-soap', {
+      this.logger.log('GUS session created successfully with GusSoapClient facade', {
         sessionId: sessionId.substring(0, 8) + '...',
         expiresAt,
         correlationId,
@@ -315,8 +323,7 @@ export class GusSessionManager {
   /**
    * Logout and cleanup session
    *
-   * NOTE: Wyloguj operation requires WS-Addressing headers which will be added
-   *       by GusHeaderManager before the operation.
+   * Uses GusSoapClient facade which automatically adds WS-Addressing headers.
    */
   async logout(correlationId: string): Promise<void> {
     if (!this.currentSession) {
@@ -326,13 +333,8 @@ export class GusSessionManager {
     const session = this.currentSession; // Capture for TypeScript type narrowing
 
     try {
-      // Call Wyloguj operation using strong-soap (using promisified helper)
-      // WS-Addressing headers will be added by GusHeaderManager before this operation
-      await callSimpleSoapOperation(
-        session.client.Wyloguj,
-        { pIdentyfikatorSesji: session.sessionId },
-        session.client,
-      );
+      // Call Wyloguj operation using facade (headers automatically injected)
+      await session.soapClient.wyloguj(session.sessionId);
 
       this.logger.log('Wyloguj operation succeeded', { correlationId });
       this.logger.log('Successfully logged out from GUS', { correlationId });

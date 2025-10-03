@@ -69,6 +69,19 @@ export interface RetryInput {
   registry?: 'P' | 'S';   // For KRS registry type
 }
 
+/**
+ * Input type for makeApiRequest actor
+ *
+ * This actor is provided by parent machine via .provide().
+ * Explicit type annotation solves XState v5 type inference limitation.
+ *
+ * Context contains all service-specific parameters needed for API call
+ * (nip, regon, krsNumber, etc.) as defined in RetryContext.
+ */
+export interface MakeApiRequestInput {
+  context: RetryContext;
+}
+
 // Events that the retry machine can receive
 export type RetryEvent =
   | { type: 'REQUEST'; payload: any }
@@ -134,7 +147,8 @@ export const createRetryMachine = (
     actors: {
       // makeApiRequest actor MUST be provided via .provide() in parent machine
       // Stub implementation throws error if not overridden
-      makeApiRequest: fromPromise(async () => {
+      // Explicit type annotation: fromPromise<TOutput, TInput>
+      makeApiRequest: fromPromise<any, MakeApiRequestInput>(async () => {
         throw new Error('makeApiRequest actor must be provided via .provide() by parent machine');
       }),
 

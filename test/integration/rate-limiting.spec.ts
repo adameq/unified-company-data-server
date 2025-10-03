@@ -45,7 +45,8 @@ describe('Integration Tests - Rate Limiting', () => {
 
     it('should verify API key configuration exists', async () => {
       // Get API keys from ConfigService (properly loaded from .env)
-      const apiKeys = configService.get('VALID_API_KEYS', { infer: true }) || [];
+      // Using APP_API_KEYS (with APP_ prefix for application-level config)
+      const apiKeys = configService.get('APP_API_KEYS', { infer: true }) || [];
 
       // Verify API keys are configured
       expect(apiKeys).toBeDefined();

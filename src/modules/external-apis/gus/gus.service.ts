@@ -11,12 +11,10 @@ import {
 import { type Environment } from '@config/environment.schema';
 import { BusinessException } from '@common/exceptions/business-exceptions';
 import { GusSessionManager } from './gus-session.manager';
-import { GusHeaderManager } from './gus-header.manager';
 import { GusRateLimiterService } from './gus-rate-limiter.service';
 import { GusSession, GusConfig } from './interfaces/gus-session.interface';
 import {
   createSoapClient,
-  callSoapOperation,
   extractSoapResult,
 } from './gus-soap.helpers';
 
@@ -113,7 +111,6 @@ export class GusService {
   private readonly logger = new Logger(GusService.name);
   private readonly config: GusConfig;
   private readonly sessionManager: GusSessionManager;
-  private readonly headerManager: GusHeaderManager;
 
   constructor(
     private readonly configService: ConfigService<Environment, true>,
@@ -126,9 +123,8 @@ export class GusService {
       sessionTimeoutMs: 30 * 60 * 1000, // 30 minutes
     };
 
-    // Initialize session manager and header manager
+    // Initialize session manager (header manager now used internally by GusSoapClient facade)
     this.sessionManager = new GusSessionManager(this.config);
-    this.headerManager = new GusHeaderManager(this.config);
   }
 
 
@@ -147,9 +143,6 @@ export class GusService {
       // Get active session (will be created if expired)
       const session = await this.sessionManager.getSession(correlationId);
 
-      // Attach header manager to add headers before SOAP operation
-      this.headerManager.attach(session.client, 'DaneSzukajPodmioty', session);
-
       // Normalize NIP (remove spaces)
       const cleanNip = nip.replace(/\s+/g, '').trim();
 
@@ -157,37 +150,30 @@ export class GusService {
       // Uses Bottleneck token bucket algorithm to queue concurrent requests
       await this.rateLimiter.schedule(() => Promise.resolve());
 
-      // Call DaneSzukajPodmioty operation using strong-soap
-      // Headers (sid, WS-Addressing) are added by GusHeaderManager.attach() above
-      const searchParams = {
-        pParametryWyszukiwania: {
-          Nip: cleanNip,
-        },
-      };
-
       this.logger.log('Calling DaneSzukajPodmioty operation', {
         nip: cleanNip,
         correlationId,
       });
 
-      // Call DaneSzukajPodmioty using promisified helper
-      const { result, envelope } = await callSoapOperation(
-        session.client.DaneSzukajPodmioty,
-        searchParams,
-        session.client,
-      ).catch((err: Error) => {
-        this.logger.error('DaneSzukajPodmioty operation failed', {
-          error: err.message,
-          nip: cleanNip,
-          correlationId,
+      // Call DaneSzukajPodmioty using facade (headers automatically injected)
+      const { result, envelope } = await session.soapClient
+        .daneSzukajPodmioty({
+          Nip: cleanNip,
+        })
+        .catch((err: Error) => {
+          this.logger.error('DaneSzukajPodmioty operation failed', {
+            error: err.message,
+            nip: cleanNip,
+            correlationId,
+          });
+          throw err;
         });
-        throw err;
-      });
 
       // Log actual SOAP request for debugging
-      if (session.client.lastRequest) {
+      const lastRequest = session.soapClient.getLastRequest();
+      if (lastRequest) {
         this.logger.debug('DaneSzukajPodmioty SOAP Request', {
-          request: session.client.lastRequest.substring(0, 1000),
+          request: lastRequest.substring(0, 1000),
           correlationId,
         });
       }
@@ -324,9 +310,6 @@ export class GusService {
       // Get active session (will be created if expired)
       const session = await this.sessionManager.getSession(correlationId);
 
-      // Attach header manager to add headers before SOAP operation
-      this.headerManager.attach(session.client, 'DanePobierzPelnyRaport', session);
-
       // Validate and normalize REGON
       const cleanRegon = regon.replace(/\s+/g, '').trim();
       if (!/^\d{9}(\d{5})?$/.test(cleanRegon)) {
@@ -344,38 +327,30 @@ export class GusService {
       // Uses Bottleneck token bucket algorithm to queue concurrent requests
       await this.rateLimiter.schedule(() => Promise.resolve());
 
-      // Call DanePobierzPelnyRaport operation using strong-soap
-      // Headers (sid, WS-Addressing) are added by GusHeaderManager.attach() above
-      const reportParams = {
-        pRegon: cleanRegon,
-        pNazwaRaportu: reportName,
-      };
-
       this.logger.log('Calling DanePobierzPelnyRaport operation', {
         regon: cleanRegon,
         reportName,
         correlationId,
       });
 
-      // Call DanePobierzPelnyRaport using promisified helper
-      const { result } = await callSoapOperation(
-        session.client.DanePobierzPelnyRaport,
-        reportParams,
-        session.client,
-      ).catch((err: Error) => {
-        this.logger.error('DanePobierzPelnyRaport operation failed', {
-          error: err.message,
-          regon: cleanRegon,
-          reportName,
-          correlationId,
+      // Call DanePobierzPelnyRaport using facade (headers automatically injected)
+      const { result } = await session.soapClient
+        .danePobierzPelnyRaport(cleanRegon, reportName)
+        .catch((err: Error) => {
+          this.logger.error('DanePobierzPelnyRaport operation failed', {
+            error: err.message,
+            regon: cleanRegon,
+            reportName,
+            correlationId,
+          });
+          throw err;
         });
-        throw err;
-      });
 
       // Log actual SOAP request for debugging
-      if (session.client.lastRequest) {
+      const lastRequest = session.soapClient.getLastRequest();
+      if (lastRequest) {
         this.logger.debug('DanePobierzPelnyRaport SOAP Request', {
-          request: session.client.lastRequest.substring(0, 1000),
+          request: lastRequest.substring(0, 1000),
           correlationId,
         });
       }

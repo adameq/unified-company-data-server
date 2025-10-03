@@ -1,8 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from '../../src/app.module';
 import type { Environment } from '../../src/config/environment.schema';
+import { AppValidationPipe } from '../../src/modules/common/pipes/app-validation.pipe';
 
 /**
  * Test App Setup Helpers
@@ -127,11 +128,13 @@ export async function createTestApp(
   // Create application instance
   const app = moduleFixture.createNestApplication();
 
-  // Configure ValidationPipe if requested
+  // Configure AppValidationPipe if requested
   // This matches the exact configuration from main.ts
+  // AppValidationPipe extends ValidationPipe to ensure ALL validation errors
+  // (including whitelist violations) are converted to structured ValidationException
   if (withValidationPipe) {
     app.useGlobalPipes(
-      new ValidationPipe({
+      new AppValidationPipe({
         // Remove properties not in DTO
         whitelist: true,
 
@@ -149,9 +152,6 @@ export async function createTestApp(
 
         // Validate custom decorators
         validateCustomDecorators: true,
-
-        // Use default BadRequestException (GlobalExceptionFilter handles it)
-        // No custom exceptionFactory needed
       }),
     );
   }

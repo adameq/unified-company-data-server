@@ -84,22 +84,31 @@ export class GusHeaderManager {
   }
 
   /**
-   * Add required headers to SOAP client before request
+   * Add WS-Addressing headers for Zaloguj (login) operation
    *
-   * Adds:
-   * 1. HTTP header 'sid' (session ID)
-   * 2. SOAP WS-Addressing headers (<wsa:To>, <wsa:Action>)
+   * Special case: Zaloguj doesn't need sessionId (not authenticated yet).
+   * Only adds SOAP WS-Addressing headers, no HTTP 'sid' header.
    *
    * @param client - strong-soap client
-   * @param operation - SOAP operation name (e.g., "DaneSzukajPodmioty")
-   * @param session - Active GUS session with sessionId (explicit dependency)
    */
-  private addHeaders(client: soap.Client, operation: string, session: GusSession): void {
-    // 1. Add HTTP header 'sid' (session ID)
+  addHeadersForLogin(client: soap.Client): void {
+    client.clearSoapHeaders();
     client.clearHttpHeaders();
-    client.addHttpHeader('sid', session.sessionId);
 
-    // 2. Add SOAP WS-Addressing headers
+    this.addWsAddressingHeaders(client, 'Zaloguj');
+
+    this.logger.debug('WS-Addressing headers added for Zaloguj', {
+      operation: 'Zaloguj',
+    });
+  }
+
+  /**
+   * Add WS-Addressing headers without session (for unauthenticated operations)
+   *
+   * @param client - strong-soap client
+   * @param operation - SOAP operation name
+   */
+  private addWsAddressingHeaders(client: soap.Client, operation: string): void {
     const action = this.OPERATION_ACTIONS[operation];
     if (!action) {
       this.logger.warn('Unknown operation, skipping WS-Addressing headers', {
@@ -118,10 +127,30 @@ export class GusHeaderManager {
     client.addSoapHeader(
       `<wsa:Action xmlns:wsa="${this.WS_ADDRESSING_NS}">${action}</wsa:Action>`,
     );
+  }
+
+  /**
+   * Add required headers to SOAP client before request
+   *
+   * Adds:
+   * 1. HTTP header 'sid' (session ID)
+   * 2. SOAP WS-Addressing headers (<wsa:To>, <wsa:Action>)
+   *
+   * @param client - strong-soap client
+   * @param operation - SOAP operation name (e.g., "DaneSzukajPodmioty")
+   * @param session - Active GUS session with sessionId (explicit dependency)
+   */
+  private addHeaders(client: soap.Client, operation: string, session: GusSession): void {
+    // 1. Add HTTP header 'sid' (session ID)
+    client.clearHttpHeaders();
+    client.addHttpHeader('sid', session.sessionId);
+
+    // 2. Add SOAP WS-Addressing headers (reuse common logic)
+    this.addWsAddressingHeaders(client, operation);
 
     this.logger.debug('Headers added automatically by interceptor', {
       operation,
-      action,
+      action: this.OPERATION_ACTIONS[operation],
       sessionIdPrefix: session.sessionId.substring(0, 8) + '...',
     });
   }
