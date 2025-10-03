@@ -1,11 +1,11 @@
-import { GusRequestInterceptor } from '../../../src/modules/external-apis/gus/gus-request.interceptor';
+import { GusHeaderManager } from '../../../src/modules/external-apis/gus/gus-header.manager';
 import { GusSessionManager } from '../../../src/modules/external-apis/gus/gus-session.manager';
 import type { GusConfig } from '../../../src/modules/external-apis/gus/interfaces/gus-session.interface';
 
 /**
- * Unit tests for GusRequestInterceptor
+ * Unit tests for GusHeaderManager
  *
- * Tests automatic header injection for GUS SOAP operations:
+ * Tests header management for GUS SOAP operations:
  * - Operation name to WS-Addressing Action mapping
  * - HTTP header (sid) injection
  * - SOAP header (WS-Addressing) injection
@@ -14,8 +14,8 @@ import type { GusConfig } from '../../../src/modules/external-apis/gus/interface
  * Full SOAP integration is tested in integration tests.
  */
 
-describe('GusRequestInterceptor', () => {
-  let interceptor: GusRequestInterceptor;
+describe('GusHeaderManager', () => {
+  let headerManager: GusHeaderManager;
   let sessionManager: GusSessionManager;
   let mockConfig: GusConfig;
 
@@ -27,37 +27,37 @@ describe('GusRequestInterceptor', () => {
       sessionTimeoutMs: 30 * 60 * 1000,
     };
     sessionManager = new GusSessionManager(mockConfig);
-    interceptor = new GusRequestInterceptor(sessionManager, mockConfig);
+    headerManager = new GusHeaderManager(sessionManager, mockConfig);
   });
 
   describe('Operation Mapping', () => {
     test('should have correct WS-Addressing Action for Zaloguj', () => {
       const expectedAction = 'http://CIS/BIR/PUBL/2014/07/IUslugaBIRzewnPubl/Zaloguj';
       // Access private property for testing (TypeScript workaround)
-      const actions = (interceptor as any).OPERATION_ACTIONS;
+      const actions = (headerManager as any).OPERATION_ACTIONS;
       expect(actions.Zaloguj).toBe(expectedAction);
     });
 
     test('should have correct WS-Addressing Action for DaneSzukajPodmioty', () => {
       const expectedAction = 'http://CIS/BIR/PUBL/2014/07/IUslugaBIRzewnPubl/DaneSzukajPodmioty';
-      const actions = (interceptor as any).OPERATION_ACTIONS;
+      const actions = (headerManager as any).OPERATION_ACTIONS;
       expect(actions.DaneSzukajPodmioty).toBe(expectedAction);
     });
 
     test('should have correct WS-Addressing Action for DanePobierzPelnyRaport', () => {
       const expectedAction = 'http://CIS/BIR/PUBL/2014/07/IUslugaBIRzewnPubl/DanePobierzPelnyRaport';
-      const actions = (interceptor as any).OPERATION_ACTIONS;
+      const actions = (headerManager as any).OPERATION_ACTIONS;
       expect(actions.DanePobierzPelnyRaport).toBe(expectedAction);
     });
 
     test('should have correct WS-Addressing Action for Wyloguj', () => {
       const expectedAction = 'http://CIS/BIR/PUBL/2014/07/IUslugaBIRzewnPubl/Wyloguj';
-      const actions = (interceptor as any).OPERATION_ACTIONS;
+      const actions = (headerManager as any).OPERATION_ACTIONS;
       expect(actions.Wyloguj).toBe(expectedAction);
     });
 
     test('should have all required operations mapped', () => {
-      const actions = (interceptor as any).OPERATION_ACTIONS;
+      const actions = (headerManager as any).OPERATION_ACTIONS;
       const requiredOperations = [
         'Zaloguj',
         'DaneSzukajPodmioty',
@@ -83,12 +83,12 @@ describe('GusRequestInterceptor', () => {
       };
 
       const manager = new GusSessionManager(config);
-      const testInterceptor = new GusRequestInterceptor(manager, config);
-      expect(testInterceptor).toBeDefined();
+      const testHeaderManager = new GusHeaderManager(manager, config);
+      expect(testHeaderManager).toBeDefined();
     });
 
     test('should use WS-Addressing namespace', () => {
-      const namespace = (interceptor as any).WS_ADDRESSING_NS;
+      const namespace = (headerManager as any).WS_ADDRESSING_NS;
       expect(namespace).toBe('http://www.w3.org/2005/08/addressing');
     });
   });

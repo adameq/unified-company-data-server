@@ -56,7 +56,7 @@ export type ZalogujResponse = z.infer<typeof ZalogujResponseSchema>;
  * 5. Return active session to caller
  *
  * NOTE: This class does NOT add SOAP headers (WS-Addressing) or HTTP headers (sid).
- *       Headers are managed by GusRequestInterceptor using strong-soap events.
+ *       Headers are managed by GusHeaderManager, which must be called manually before each operation.
  */
 @Injectable()
 export class GusSessionManager {
@@ -127,7 +127,7 @@ export class GusSessionManager {
 
   /**
    * Get current session without creating new one
-   * Used by GusRequestInterceptor to access sessionId
+   * Used by GusHeaderManager to access sessionId
    */
   getCurrentSession(): GusSession | null {
     return this.currentSession;
@@ -150,7 +150,7 @@ export class GusSessionManager {
    * 3. Extract and validate sessionId
    * 4. Store session with expiration time
    *
-   * NOTE: WS-Addressing headers and sid HTTP header are added by GusRequestInterceptor,
+   * NOTE: WS-Addressing headers and sid HTTP header are added by GusHeaderManager,
    *       NOT in this method.
    */
   private async createNewSession(correlationId: string): Promise<GusSession> {
@@ -316,7 +316,7 @@ export class GusSessionManager {
    * Logout and cleanup session
    *
    * NOTE: Wyloguj operation requires WS-Addressing headers which will be added
-   *       by GusRequestInterceptor automatically.
+   *       by GusHeaderManager before the operation.
    */
   async logout(correlationId: string): Promise<void> {
     if (!this.currentSession) {
@@ -327,7 +327,7 @@ export class GusSessionManager {
 
     try {
       // Call Wyloguj operation using strong-soap (using promisified helper)
-      // WS-Addressing headers will be added automatically by GusRequestInterceptor
+      // WS-Addressing headers will be added by GusHeaderManager before this operation
       await callSimpleSoapOperation(
         session.client.Wyloguj,
         { pIdentyfikatorSesji: session.sessionId },

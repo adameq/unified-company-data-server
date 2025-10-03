@@ -4,17 +4,19 @@ import { GusSessionManager } from './gus-session.manager';
 import type { GusConfig } from './interfaces/gus-session.interface';
 
 /**
- * GusRequestInterceptor
+ * GusHeaderManager
  *
- * Automatically adds required headers to all GUS SOAP requests using strong-soap events.
+ * Manages HTTP and SOAP headers for GUS API requests.
+ * Must be invoked manually before each SOAP operation.
  *
  * Responsibilities:
- * - Attach to strong-soap client 'request' event (emitted before each SOAP call)
- * - Add HTTP header 'sid' (session ID) to all requests
- * - Add SOAP WS-Addressing headers (<wsa:To>, <wsa:Action>) to all requests
+ * - Add HTTP header 'sid' (session ID) to SOAP client
+ * - Add SOAP WS-Addressing headers (<wsa:To>, <wsa:Action>) to SOAP client
  * - Map SOAP operation names to WS-Addressing Action URIs
  *
- * This eliminates the need for manual header management in business methods.
+ * NOTE: This is NOT an automatic interceptor. The attach() method must be
+ * called manually before each SOAP operation because strong-soap does not
+ * provide a global 'request' event for automatic header injection.
  *
  * Headers Added:
  * 1. HTTP Header: sid = {sessionId}
@@ -30,20 +32,20 @@ import type { GusConfig } from './interfaces/gus-session.interface';
  * Usage:
  * ```typescript
  * const session = await sessionManager.getSession(correlationId);
- * const interceptor = new GusRequestInterceptor(sessionManager, config);
- * interceptor.attach(session.client);
+ * const headerManager = new GusHeaderManager(sessionManager, config);
  *
- * // Now all SOAP operations have headers added automatically
- * session.client.DaneSzukajPodmioty(...);
+ * // IMPORTANT: Manually attach headers before each SOAP operation
+ * headerManager.attach(session.client, 'DaneSzukajPodmioty');
+ * await session.client.DaneSzukajPodmioty(...);
  * ```
  *
  * Based on:
  * - GUS official documentation (BIR11_Przyklady.pdf, page 5)
- * - strong-soap events: https://github.com/loopbackio/strong-soap#client-events
+ * - strong-soap client API: https://github.com/loopbackio/strong-soap
  */
 @Injectable()
-export class GusRequestInterceptor {
-  private readonly logger = new Logger(GusRequestInterceptor.name);
+export class GusHeaderManager {
+  private readonly logger = new Logger(GusHeaderManager.name);
 
   // WS-Addressing namespace (required by GUS API)
   private readonly WS_ADDRESSING_NS = 'http://www.w3.org/2005/08/addressing';

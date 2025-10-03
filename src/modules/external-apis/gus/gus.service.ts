@@ -11,7 +11,7 @@ import {
 import { type Environment } from '@config/environment.schema';
 import { BusinessException } from '@common/exceptions/business-exceptions';
 import { GusSessionManager } from './gus-session.manager';
-import { GusRequestInterceptor } from './gus-request.interceptor';
+import { GusHeaderManager } from './gus-header.manager';
 import { GusRateLimiterService } from './gus-rate-limiter.service';
 import { GusSession, GusConfig } from './interfaces/gus-session.interface';
 import {
@@ -112,7 +112,7 @@ export class GusService {
   private readonly logger = new Logger(GusService.name);
   private readonly config: GusConfig;
   private readonly sessionManager: GusSessionManager;
-  private readonly requestInterceptor: GusRequestInterceptor;
+  private readonly headerManager: GusHeaderManager;
 
   constructor(
     private readonly configService: ConfigService<Environment, true>,
@@ -125,9 +125,9 @@ export class GusService {
       sessionTimeoutMs: 30 * 60 * 1000, // 30 minutes
     };
 
-    // Initialize session manager and request interceptor
+    // Initialize session manager and header manager
     this.sessionManager = new GusSessionManager(this.config);
-    this.requestInterceptor = new GusRequestInterceptor(
+    this.headerManager = new GusHeaderManager(
       this.sessionManager,
       this.config,
     );
@@ -149,8 +149,8 @@ export class GusService {
       // Get active session (will be created if expired)
       const session = await this.sessionManager.getSession(correlationId);
 
-      // Attach interceptor to add headers automatically
-      this.requestInterceptor.attach(session.client, 'DaneSzukajPodmioty');
+      // Attach header manager to add headers before SOAP operation
+      this.headerManager.attach(session.client, 'DaneSzukajPodmioty');
 
       // Normalize NIP (remove spaces)
       const cleanNip = nip.replace(/\s+/g, '').trim();
@@ -160,7 +160,7 @@ export class GusService {
       await this.rateLimiter.schedule(() => Promise.resolve());
 
       // Call DaneSzukajPodmioty operation using strong-soap
-      // Headers (sid, WS-Addressing) are added automatically by GusRequestInterceptor
+      // Headers (sid, WS-Addressing) are added by GusHeaderManager.attach() above
       const searchParams = {
         pParametryWyszukiwania: {
           Nip: cleanNip,
@@ -326,8 +326,8 @@ export class GusService {
       // Get active session (will be created if expired)
       const session = await this.sessionManager.getSession(correlationId);
 
-      // Attach interceptor to add headers automatically
-      this.requestInterceptor.attach(session.client, 'DanePobierzPelnyRaport');
+      // Attach header manager to add headers before SOAP operation
+      this.headerManager.attach(session.client, 'DanePobierzPelnyRaport');
 
       // Validate and normalize REGON
       const cleanRegon = regon.replace(/\s+/g, '').trim();
@@ -347,7 +347,7 @@ export class GusService {
       await this.rateLimiter.schedule(() => Promise.resolve());
 
       // Call DanePobierzPelnyRaport operation using strong-soap
-      // Headers (sid, WS-Addressing) are added automatically by GusRequestInterceptor
+      // Headers (sid, WS-Addressing) are added by GusHeaderManager.attach() above
       const reportParams = {
         pRegon: cleanRegon,
         pNazwaRaportu: reportName,
@@ -499,7 +499,7 @@ export class GusService {
    * Logout and cleanup session
    *
    * Delegates to GusSessionManager for session management.
-   * Headers are added automatically by GusRequestInterceptor.
+   * Headers are added by GusHeaderManager before logout operation.
    */
   async logout(correlationId: string): Promise<void> {
     await this.sessionManager.logout(correlationId);
