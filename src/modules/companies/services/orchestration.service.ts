@@ -1,6 +1,6 @@
 import { Injectable, Logger, Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createActor, fromPromise } from 'xstate';
+import { createActor, fromPromise, toPromise } from 'xstate';
 import { z } from 'zod';
 import { UnifiedCompanyDataSchema } from '../../../schemas/unified-company-data.schema';
 import {
@@ -121,21 +121,19 @@ export class OrchestrationService {
             });
 
             const actor = createActor(retryMachine, { input });
+            actor.start();
 
-            return new Promise((resolve, reject) => {
-              actor.subscribe({
-                complete: () => {
-                  const snapshot = actor.getSnapshot();
-                  if (snapshot.value === 'success') {
-                    resolve(snapshot.output !== undefined ? snapshot.output : snapshot.context?.result);
-                  } else {
-                    reject(snapshot.output || snapshot.context?.lastError);
-                  }
-                },
-                error: (err) => reject(err),
-              });
-              actor.start();
-            });
+            // Wait for completion and check final state
+            // toPromise() resolves for ANY final state, so we need to check success/failure manually
+            await toPromise(actor);
+            const finalSnapshot = actor.getSnapshot();
+
+            if (finalSnapshot.value === 'success') {
+              return finalSnapshot.output ?? finalSnapshot.context?.result;
+            } else {
+              // Retry machine failed - throw the error
+              throw finalSnapshot.output || finalSnapshot.context?.lastError || new Error('GUS retry failed');
+            }
           }),
 
           // GUS Detailed Data with retry logic via state machine
@@ -154,21 +152,16 @@ export class OrchestrationService {
             });
 
             const actor = createActor(retryMachine, { input });
+            actor.start();
 
-            return new Promise((resolve, reject) => {
-              actor.subscribe({
-                complete: () => {
-                  const snapshot = actor.getSnapshot();
-                  if (snapshot.value === 'success') {
-                    resolve(snapshot.output !== undefined ? snapshot.output : snapshot.context?.result);
-                  } else {
-                    reject(snapshot.output || snapshot.context?.lastError);
-                  }
-                },
-                error: (err) => reject(err),
-              });
-              actor.start();
-            });
+            await toPromise(actor);
+            const finalSnapshot = actor.getSnapshot();
+
+            if (finalSnapshot.value === 'success') {
+              return finalSnapshot.output ?? finalSnapshot.context?.result;
+            } else {
+              throw finalSnapshot.output || finalSnapshot.context?.lastError || new Error('GUS detailed data retry failed');
+            }
           }),
 
           // KRS Data with retry logic via state machine
@@ -187,21 +180,16 @@ export class OrchestrationService {
             });
 
             const actor = createActor(retryMachine, { input });
+            actor.start();
 
-            return new Promise((resolve, reject) => {
-              actor.subscribe({
-                complete: () => {
-                  const snapshot = actor.getSnapshot();
-                  if (snapshot.value === 'success') {
-                    resolve(snapshot.output !== undefined ? snapshot.output : snapshot.context?.result);
-                  } else {
-                    reject(snapshot.output || snapshot.context?.lastError);
-                  }
-                },
-                error: (err) => reject(err),
-              });
-              actor.start();
-            });
+            await toPromise(actor);
+            const finalSnapshot = actor.getSnapshot();
+
+            if (finalSnapshot.value === 'success') {
+              return finalSnapshot.output ?? finalSnapshot.context?.result;
+            } else {
+              throw finalSnapshot.output || finalSnapshot.context?.lastError || new Error('KRS retry failed');
+            }
           }),
 
           // CEIDG Data with retry logic via state machine
@@ -219,21 +207,16 @@ export class OrchestrationService {
             });
 
             const actor = createActor(retryMachine, { input });
+            actor.start();
 
-            return new Promise((resolve, reject) => {
-              actor.subscribe({
-                complete: () => {
-                  const snapshot = actor.getSnapshot();
-                  if (snapshot.value === 'success') {
-                    resolve(snapshot.output !== undefined ? snapshot.output : snapshot.context?.result);
-                  } else {
-                    reject(snapshot.output || snapshot.context?.lastError);
-                  }
-                },
-                error: (err) => reject(err),
-              });
-              actor.start();
-            });
+            await toPromise(actor);
+            const finalSnapshot = actor.getSnapshot();
+
+            if (finalSnapshot.value === 'success') {
+              return finalSnapshot.output ?? finalSnapshot.context?.result;
+            } else {
+              throw finalSnapshot.output || finalSnapshot.context?.lastError || new Error('CEIDG retry failed');
+            }
           }),
 
           // Inactive company mapping (no retry needed)
@@ -332,8 +315,9 @@ export class OrchestrationService {
   }
 
   /**
-   * Wait for state machine completion
-   * Timeout is now handled by the state machine itself via 'after' transitions
+   * Wait for state machine completion using XState v5 toPromise() helper
+   * Eliminates Promise constructor anti-pattern with idiomatic XState code
+   * Timeout is handled by the state machine itself via 'after' transitions
    */
   private async waitForCompletion(
     actor: {
@@ -345,86 +329,116 @@ export class OrchestrationService {
     },
     correlationId: string,
   ): Promise<UnifiedCompanyData> {
-    return new Promise((resolve, reject) => {
-      // Subscribe to actor state changes
-      const subscription = actor.subscribe((snapshot: any) => {
-        // XState v5: Wait until machine reaches final state
-        if (snapshot.status !== 'done') {
-          return; // Still processing
+    try {
+      // XState v5: Use toPromise() to convert actor to promise
+      // Note: toPromise() resolves with snapshot.output for success states
+      // For final states that are not success, it still resolves (not rejects)
+      // because the actor reaches 'done' status
+      const output = await toPromise(actor);
+
+      const snapshot = actor.getSnapshot();
+      this.logger.debug('State machine completed', {
+        correlationId,
+        finalState: snapshot.value,
+        status: snapshot.status,
+      });
+
+      // Check if we reached a success state
+      if (snapshot.value !== 'success') {
+        // Actor completed but not in success state (e.g., timeoutFailure, entityNotFoundFailure)
+        // Extract error from output or context
+        const errorOutput = snapshot.output || snapshot.context?.lastError;
+
+        if (errorOutput && errorOutput.errorCode) {
+          throw new BusinessException(errorOutput);
         }
 
-        // Unsubscribe immediately when done
-        subscription.unsubscribe();
+        // Fallback for unexpected final states
+        throw new BusinessException(
+          createErrorResponse({
+            errorCode: 'ORCHESTRATION_FAILED',
+            message: 'Orchestration failed with unknown error',
+            correlationId,
+            source: 'INTERNAL',
+            details: { finalState: snapshot.value },
+          }),
+        );
+      }
 
-        this.logger.debug('State machine completed', {
+      // Success state - get data from context.finalCompanyData (XState v5 output evaluation issue)
+      const finalData = snapshot.context?.finalCompanyData;
+
+      if (!finalData) {
+        this.logger.error('No data in success state', {
           correlationId,
-          finalState: snapshot.value,
-          status: snapshot.status,
+          hasOutput: !!output,
+          hasContextFinal: !!snapshot.context?.finalCompanyData,
+          snapshotValue: snapshot.value,
         });
 
-        // Check if success state
-        if (snapshot.value === 'success') {
-          // XState v5: Use output property from final state, fallback to context
-          const output = snapshot.output || snapshot.context?.finalCompanyData;
-          if (!output) {
-            this.logger.error('No data in success state', {
-              correlationId,
-              hasOutput: !!snapshot.output,
-              hasContext: !!snapshot.context,
-              hasFinalCompanyData: !!snapshot.context?.finalCompanyData,
-              contextKeys: snapshot.context ? Object.keys(snapshot.context) : [],
-            });
+        throw new BusinessException(
+          createErrorResponse({
+            errorCode: 'DATA_MAPPING_FAILED',
+            message: 'No data in success state output',
+            correlationId,
+            source: 'INTERNAL',
+          }),
+        );
+      }
 
-            const errorResponse = createErrorResponse({
-              errorCode: 'DATA_MAPPING_FAILED',
-              message: 'No data in success state output',
-              correlationId,
-              source: 'INTERNAL',
-            });
-            reject(new BusinessException(errorResponse));
-            return;
-          }
+      // Validate output with Zod schema
+      try {
+        return UnifiedCompanyDataSchema.parse(finalData);
+      } catch (validationError) {
+        this.logger.error('Output validation failed', {
+          correlationId,
+          validationError:
+            validationError instanceof Error
+              ? validationError.message
+              : String(validationError),
+        });
 
-          try {
-            const validatedData = UnifiedCompanyDataSchema.parse(output);
-            resolve(validatedData);
-          } catch (validationError) {
-            const errorResponse = createErrorResponse({
-              errorCode: 'DATA_MAPPING_FAILED',
-              message: 'Failed to validate unified company data',
-              correlationId,
-              source: 'INTERNAL',
-              details: {
-                validationError:
-                  validationError instanceof Error
-                    ? validationError.message
-                    : String(validationError),
-              },
-            });
-            reject(new BusinessException(errorResponse));
-          }
-        } else {
-          // All failure states have error info in output or context
-          // XState v5: output property might not be populated for error states
-          // Fallback to context.lastError which is set by captureSystemError action
-          const errorOutput = snapshot.output || snapshot.context?.lastError;
+        throw new BusinessException(
+          createErrorResponse({
+            errorCode: 'DATA_MAPPING_FAILED',
+            message: 'Failed to validate unified company data',
+            correlationId,
+            source: 'INTERNAL',
+            details: {
+              validationError:
+                validationError instanceof Error
+                  ? validationError.message
+                  : String(validationError),
+            },
+          }),
+        );
+      }
+    } catch (error) {
+      // Handle errors from validation or BusinessException throws above
+      if (error instanceof BusinessException) {
+        throw error;
+      }
 
-          if (errorOutput && errorOutput.errorCode) {
-            reject(new BusinessException(errorOutput));
-          } else {
-            // Fallback for unexpected states
-            const errorResponse = createErrorResponse({
-              errorCode: 'ORCHESTRATION_FAILED',
-              message: 'Orchestration failed with unknown error',
-              correlationId,
-              source: 'INTERNAL',
-              details: { finalState: snapshot.value },
-            });
-            reject(new BusinessException(errorResponse));
-          }
-        }
+      // Handle unexpected toPromise() rejections (should not happen in normal flow)
+      const snapshot = actor.getSnapshot();
+
+      this.logger.error('Unexpected error in waitForCompletion', {
+        correlationId,
+        finalState: snapshot.value,
+        status: snapshot.status,
+        error: error instanceof Error ? error.message : String(error),
       });
-    });
+
+      throw new BusinessException(
+        createErrorResponse({
+          errorCode: 'ORCHESTRATION_FAILED',
+          message: error instanceof Error ? error.message : 'Orchestration failed with unknown error',
+          correlationId,
+          source: 'INTERNAL',
+          details: { finalState: snapshot.value },
+        }),
+      );
+    }
   }
 
   /**

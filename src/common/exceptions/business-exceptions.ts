@@ -1,5 +1,9 @@
-import { HttpException, HttpStatus } from '@nestjs/common';
-import type { ErrorResponse, ErrorCode } from '../../schemas/error-response.schema';
+import { HttpException } from '@nestjs/common';
+import {
+  type ErrorResponse,
+  type ErrorCode,
+  getHttpStatusForErrorCode,
+} from '../../schemas/error-response.schema';
 
 /**
  * Business Exception
@@ -33,7 +37,7 @@ export class BusinessException extends HttpException {
   public readonly timestamp: string;
 
   constructor(errorResponse: Omit<ErrorResponse, 'timestamp'> & { timestamp?: string }) {
-    // Map errorCode to appropriate HTTP status
+    // Map errorCode to appropriate HTTP status using centralized mapping
     const statusCode = getHttpStatusForErrorCode(errorResponse.errorCode as ErrorCode);
 
     // Call parent constructor with message and status
@@ -68,68 +72,4 @@ export class BusinessException extends HttpException {
       details: this.details,
     };
   }
-}
-
-/**
- * Map error codes to HTTP status codes
- */
-function getHttpStatusForErrorCode(errorCode: ErrorCode): number {
-  // Input validation errors -> 400
-  if (
-    errorCode === 'INVALID_NIP_FORMAT' ||
-    errorCode === 'INVALID_REQUEST_FORMAT' ||
-    errorCode === 'MISSING_REQUIRED_FIELDS'
-  ) {
-    return HttpStatus.BAD_REQUEST;
-  }
-
-  // Authentication/authorization errors -> 401/403
-  if (
-    errorCode === 'INVALID_API_KEY' ||
-    errorCode === 'MISSING_API_KEY' ||
-    errorCode === 'API_KEY_EXPIRED'
-  ) {
-    return HttpStatus.UNAUTHORIZED;
-  }
-  if (errorCode === 'INSUFFICIENT_PERMISSIONS') {
-    return HttpStatus.FORBIDDEN;
-  }
-
-  // Not found errors -> 404
-  if (errorCode === 'ENTITY_NOT_FOUND' || errorCode === 'ENTITY_DEREGISTERED') {
-    return HttpStatus.NOT_FOUND;
-  }
-
-  // Timeout errors -> 408
-  if (errorCode === 'TIMEOUT_ERROR') {
-    return HttpStatus.REQUEST_TIMEOUT;
-  }
-
-  // Rate limiting -> 429
-  if (
-    errorCode === 'RATE_LIMIT_EXCEEDED' ||
-    errorCode === 'KRS_RATE_LIMIT' ||
-    errorCode === 'CEIDG_RATE_LIMIT'
-  ) {
-    return HttpStatus.TOO_MANY_REQUESTS;
-  }
-
-  // Service unavailable errors -> 503
-  if (
-    errorCode === 'GUS_SERVICE_UNAVAILABLE' ||
-    errorCode === 'KRS_SERVICE_UNAVAILABLE' ||
-    errorCode === 'CEIDG_SERVICE_UNAVAILABLE' ||
-    errorCode === 'SERVICE_DEGRADED' ||
-    errorCode === 'CRITICAL_SERVICE_UNAVAILABLE'
-  ) {
-    return HttpStatus.SERVICE_UNAVAILABLE;
-  }
-
-  // Bad gateway errors -> 502
-  if (errorCode === 'NETWORK_ERROR') {
-    return HttpStatus.BAD_GATEWAY;
-  }
-
-  // All other errors -> 500
-  return HttpStatus.INTERNAL_SERVER_ERROR;
 }

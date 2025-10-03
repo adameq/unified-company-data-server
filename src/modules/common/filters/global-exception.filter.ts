@@ -3,29 +3,27 @@ import {
   Catch,
   ArgumentsHost,
   HttpException,
-  HttpStatus,
   Logger,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
-import { ZodError } from 'zod';
-import {
-  createErrorResponse,
-  getHttpStatusForErrorCode,
-  type ErrorResponse,
-  type ErrorCode,
-  ERROR_CODES,
-} from '../../../schemas/error-response.schema';
-import { BusinessException } from '../../../common/exceptions/business-exceptions';
+import { getHttpStatusForErrorCode } from '../../../schemas/error-response.schema';
 import {
   extractFromRequest,
   generateCorrelationId,
 } from '../utils/correlation-id.utils';
+import { ExceptionHandlerRegistry } from './exception-handlers.registry';
 
 /**
- * Global Exception Filter
+ * Global Exception Filter (Refactored)
  *
- * Catches all unhandled exceptions and converts them to standardized error responses.
- * Ensures consistent error format across the entire application.
+ * Catches all unhandled exceptions and converts them to standardized error responses
+ * using a strategy pattern for clean, maintainable error handling.
+ *
+ * Architecture:
+ * - Uses ExceptionHandlerRegistry for declarative handler selection
+ * - Each exception type has a dedicated handler (single responsibility)
+ * - Easy to extend with new exception types (open/closed principle)
+ * - Centralized HTTP status mapping (DRY principle)
  *
  * Type-safe: Uses Express.Request extension from src/types/express.d.ts
  */
@@ -42,15 +40,15 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     // Extract correlation ID from request
     const correlationId = this.getCorrelationId(request);
 
-    // Log the exception
+    // Log the exception with context
     this.logException(exception, request, correlationId);
 
-    // Convert exception to standardized error response
-    const errorResponse = this.createStandardizedError(
-      exception,
-      correlationId,
-    );
-    const statusCode = this.getStatusCode(exception, errorResponse);
+    // Find appropriate handler and convert to ErrorResponse
+    const handler = ExceptionHandlerRegistry.findHandler(exception);
+    const errorResponse = handler.handle(exception, correlationId);
+
+    // Map ErrorCode to HTTP status
+    const statusCode = getHttpStatusForErrorCode(errorResponse.errorCode);
 
     // Send error response
     response.status(statusCode).json(errorResponse);
@@ -88,6 +86,8 @@ export class GlobalExceptionFilter implements ExceptionFilter {
 
   /**
    * Log the exception with context
+   *
+   * Simplified logging - delegates exception type detection to handlers
    */
   private logException(
     exception: unknown,
@@ -131,11 +131,6 @@ export class GlobalExceptionFilter implements ExceptionFilter {
           },
         });
       }
-    } else if (exception instanceof ZodError) {
-      this.logger.warn('Validation Error', {
-        ...logContext,
-        validationErrors: exception.issues,
-      });
     } else if (exception instanceof Error) {
       this.logger.error(`Unhandled Error: ${exception.message}`, {
         ...logContext,
@@ -151,309 +146,6 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         exception: String(exception),
       });
     }
-  }
-
-  /**
-   * Convert any exception to standardized error response
-   */
-  private createStandardizedError(
-    exception: unknown,
-    correlationId: string,
-  ): ErrorResponse {
-    // Handle BusinessException (highest priority - preserves all error metadata)
-    if (exception instanceof BusinessException) {
-      return exception.toErrorResponse();
-    }
-
-    // Handle HttpException (includes NestJS built-in exceptions and ValidationPipe errors)
-    if (exception instanceof HttpException) {
-      const response = exception.getResponse();
-
-      // If response is already an ErrorResponse, return it
-      if (typeof response === 'object' && response && 'errorCode' in response) {
-        return response as ErrorResponse;
-      }
-
-      // Convert HttpException to ErrorResponse
-      return this.httpExceptionToErrorResponse(exception, correlationId);
-    }
-
-    // Handle Zod validation errors
-    if (exception instanceof ZodError) {
-      return this.zodErrorToErrorResponse(exception, correlationId);
-    }
-
-    // Handle standard JavaScript errors
-    if (exception instanceof Error) {
-      return this.standardErrorToErrorResponse(exception, correlationId);
-    }
-
-    // Handle unknown exceptions
-    return createErrorResponse({
-      errorCode: 'INTERNAL_SERVER_ERROR',
-      message: 'An unexpected error occurred',
-      correlationId,
-      source: 'INTERNAL',
-      details: {
-        exception: String(exception),
-      },
-    });
-  }
-
-  /**
-   * Convert HttpException to ErrorResponse
-   *
-   * Handles both standard HttpExceptions and ValidationPipe errors.
-   * ValidationPipe errors have response.message as array of validation messages.
-   */
-  private httpExceptionToErrorResponse(
-    exception: HttpException,
-    correlationId: string,
-  ): ErrorResponse {
-    const status = exception.getStatus();
-    const response = exception.getResponse();
-
-    // Check if this is a ValidationPipe error (response.message is array)
-    if (
-      typeof response === 'object' &&
-      response &&
-      'message' in response &&
-      Array.isArray(response.message) &&
-      status === 400
-    ) {
-      return this.validationErrorToErrorResponse(
-        response.message,
-        correlationId,
-      );
-    }
-
-    const message = exception.message;
-
-    // Map common HTTP status codes to error codes
-    const errorCodeMap: Record<number, ErrorCode> = {
-      400: ERROR_CODES.INVALID_REQUEST_FORMAT,
-      401: ERROR_CODES.INVALID_API_KEY,
-      403: ERROR_CODES.INSUFFICIENT_PERMISSIONS,
-      404: ERROR_CODES.ENTITY_NOT_FOUND,
-      408: ERROR_CODES.TIMEOUT_ERROR,
-      422: ERROR_CODES.DATA_MAPPING_FAILED,
-      429: ERROR_CODES.RATE_LIMIT_EXCEEDED,
-      500: ERROR_CODES.INTERNAL_SERVER_ERROR,
-      502: ERROR_CODES.NETWORK_ERROR,
-      503: ERROR_CODES.SERVICE_DEGRADED,
-    };
-
-    const errorCode =
-      errorCodeMap[status] || ERROR_CODES.INTERNAL_SERVER_ERROR;
-
-    return createErrorResponse({
-      errorCode,
-      message: message || `HTTP ${status} error`,
-      correlationId,
-      source: 'INTERNAL',
-      details: {
-        httpStatus: status,
-        originalMessage: message,
-      },
-    });
-  }
-
-  /**
-   * Convert ValidationPipe errors to ErrorResponse
-   *
-   * Analyzes validation error messages to determine appropriate error code
-   * and creates user-friendly messages.
-   */
-  private validationErrorToErrorResponse(
-    validationMessages: string[],
-    correlationId: string,
-  ): ErrorResponse {
-    // Determine error code based on validation messages
-    const errorCode = this.determineValidationErrorCode(validationMessages);
-
-    // Create user-friendly message
-    const message = this.createValidationMessage(errorCode, validationMessages);
-
-    return createErrorResponse({
-      errorCode,
-      message,
-      correlationId,
-      source: 'INTERNAL',
-      details: {
-        validationErrors: validationMessages,
-      },
-    });
-  }
-
-  /**
-   * Analyze validation messages to determine appropriate ErrorCode
-   */
-  private determineValidationErrorCode(messages: string[]): ErrorCode {
-    // Check if any message is related to 'nip' field
-    const hasNipError = messages.some((msg) =>
-      msg.toLowerCase().includes('nip'),
-    );
-
-    if (hasNipError) {
-      return 'INVALID_NIP_FORMAT';
-    }
-
-    // Check if any message indicates missing/required field
-    const hasMissingField = messages.some((msg) => {
-      const lowerMsg = msg.toLowerCase();
-      return (
-        lowerMsg.includes('required') ||
-        lowerMsg.includes('should not be empty') ||
-        lowerMsg.includes('must be a string') ||
-        lowerMsg.includes('must be defined')
-      );
-    });
-
-    if (hasMissingField) {
-      return 'MISSING_REQUIRED_FIELDS';
-    }
-
-    // Default for other validation errors
-    return 'INVALID_REQUEST_FORMAT';
-  }
-
-  /**
-   * Create user-friendly message based on error code and validation messages
-   */
-  private createValidationMessage(
-    errorCode: ErrorCode,
-    messages: string[],
-  ): string {
-    switch (errorCode) {
-      case 'INVALID_NIP_FORMAT':
-        return 'Invalid NIP format. Expected exactly 10 digits.';
-
-      case 'MISSING_REQUIRED_FIELDS':
-        return 'Required fields are missing from the request.';
-
-      case 'INVALID_REQUEST_FORMAT':
-        // Extract field names from validation messages
-        const fieldMatches = messages.map((msg) => {
-          // Try to extract field name from messages like "property fieldName should not exist"
-          const match = msg.match(/property (\w+)/);
-          return match ? match[1] : null;
-        }).filter((field): field is string => field !== null);
-
-        if (fieldMatches.length > 0) {
-          const fields = fieldMatches.join(', ');
-          return `Invalid request format. Check fields: ${fields}`;
-        }
-
-        return 'Invalid request format.';
-
-      default:
-        return 'Validation failed.';
-    }
-  }
-
-  /**
-   * Convert ZodError to ErrorResponse
-   */
-  private zodErrorToErrorResponse(
-    exception: ZodError,
-    correlationId: string,
-  ): ErrorResponse {
-    // Check if this is a NIP validation error
-    const nipError = exception.issues.find(
-      (issue) =>
-        issue.path.includes('nip') ||
-        issue.message.toLowerCase().includes('nip'),
-    );
-
-    const errorCode = nipError
-      ? 'INVALID_NIP_FORMAT'
-      : 'INVALID_REQUEST_FORMAT';
-    const message = nipError
-      ? 'Invalid NIP format. Expected 10 digits.'
-      : 'Request validation failed';
-
-    return createErrorResponse({
-      errorCode,
-      message,
-      correlationId,
-      source: 'INTERNAL',
-      details: {
-        validationErrors: exception.issues.map((issue) => ({
-          path: issue.path.join('.'),
-          message: issue.message,
-          code: issue.code,
-        })),
-      },
-    });
-  }
-
-  /**
-   * Convert standard Error to ErrorResponse
-   */
-  private standardErrorToErrorResponse(
-    exception: Error,
-    correlationId: string,
-  ): ErrorResponse {
-    // Check for specific error types
-    if (exception.message.toLowerCase().includes('timeout')) {
-      return createErrorResponse({
-        errorCode: 'TIMEOUT_ERROR',
-        message: 'Operation timed out',
-        correlationId,
-        source: 'INTERNAL',
-        details: {
-          originalMessage: exception.message,
-        },
-      });
-    }
-
-    if (
-      exception.message.toLowerCase().includes('network') ||
-      exception.message.toLowerCase().includes('connection')
-    ) {
-      return createErrorResponse({
-        errorCode: 'NETWORK_ERROR',
-        message: 'Network connection error',
-        correlationId,
-        source: 'INTERNAL',
-        details: {
-          originalMessage: exception.message,
-        },
-      });
-    }
-
-    // Generic error
-    return createErrorResponse({
-      errorCode: 'INTERNAL_SERVER_ERROR',
-      message: 'An internal server error occurred',
-      correlationId,
-      source: 'INTERNAL',
-      details: {
-        originalMessage: exception.message,
-        errorName: exception.constructor.name,
-      },
-    });
-  }
-
-  /**
-   * Get HTTP status code for the response
-   */
-  private getStatusCode(
-    exception: unknown,
-    errorResponse: ErrorResponse,
-  ): number {
-    // If it's an HttpException, use its status
-    if (exception instanceof HttpException) {
-      return exception.getStatus();
-    }
-
-    // If it's a validation error, return 400
-    if (exception instanceof ZodError) {
-      return HttpStatus.BAD_REQUEST;
-    }
-
-    // Use error code mapping
-    return getHttpStatusForErrorCode(errorResponse.errorCode as ErrorCode);
   }
 }
 
@@ -502,10 +194,8 @@ export const ErrorFilterUtils = {
       return exception.getStatus() >= 500;
     }
 
-    if (exception instanceof ZodError) {
-      return false; // Validation errors are client errors
-    }
-
-    return true; // Unknown exceptions are server errors
+    // Validation errors are client errors (handled by ZodErrorHandler)
+    // Unknown exceptions are server errors
+    return !(exception instanceof Error && exception.message.toLowerCase().includes('validation'));
   },
 };
