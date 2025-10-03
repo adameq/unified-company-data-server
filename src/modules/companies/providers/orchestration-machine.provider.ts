@@ -149,15 +149,10 @@ export const baseOrchestrationMachine = setup({
 
     isNotFoundError: ({ context, event }) => {
       const error = (event as any).output || (event as any).error;
-      const errorCode = error?.errorCode || error?.code;
-      const statusCode = error?.status || error?.statusCode;
 
-      return (
-        errorCode === 'ENTITY_NOT_FOUND' ||
-        statusCode === 404 ||
-        error?.message?.includes('not found') ||
-        error?.message?.includes('Not Found')
-      );
+      // Check if error is BusinessException with ENTITY_NOT_FOUND errorCode
+      // All services (GUS, KRS, CEIDG) throw BusinessException with standardized errorCode
+      return error?.errorCode === 'ENTITY_NOT_FOUND';
     },
   },
 
@@ -572,7 +567,9 @@ export const baseOrchestrationMachine = setup({
           {
             guard: ({ event }) => {
               const error = (event as any).error;
-              return error?.code === 'ENTITY_NOT_FOUND' || error?.errorCode === 'ENTITY_NOT_FOUND' || error?.response?.status === 404;
+              // Check BusinessException errorCode for ENTITY_NOT_FOUND
+              // All services throw standardized BusinessException
+              return error?.errorCode === 'ENTITY_NOT_FOUND';
             },
             target: 'fetchingKrsFromS',
             actions: ['captureSystemError', 'logKrsPFallbackToS'],

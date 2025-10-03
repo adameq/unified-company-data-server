@@ -72,6 +72,7 @@ export const TEST_SCENARIOS = {
 
 /**
  * Helper to get valid API key for tests
+ * Returns the default API key from environment.schema.ts
  */
 export const getTestApiKey = () =>
-  'test-api-key-for-development-at-least-32-characters-long';
+  'dev_api_key_1234567890abcdef1234567890abcdef';
