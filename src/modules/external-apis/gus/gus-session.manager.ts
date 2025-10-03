@@ -7,6 +7,10 @@ import {
 } from '../../../schemas/error-response.schema';
 import { BusinessException } from '../../../common/exceptions/business-exceptions';
 import type { GusSession, GusConfig } from './interfaces/gus-session.interface';
+import {
+  createSoapClient,
+  callSimpleSoapOperation,
+} from './gus-soap.helpers';
 
 /**
  * Zaloguj (Login) response schema
@@ -155,21 +159,12 @@ export class GusSessionManager {
     });
 
     try {
-      // Step 1: Create strong-soap client from WSDL
-      const client = await new Promise<soap.Client>((resolve, reject) => {
-        soap.createClient(
-          this.config.wsdlUrl,
-          {
-            endpoint: this.config.baseUrl,
-            wsdl_options: {
-              timeout: 10000, // 10s timeout for WSDL loading
-            },
-          },
-          (err: Error | null, client: soap.Client) => {
-            if (err) reject(err);
-            else resolve(client);
-          },
-        );
+      // Step 1: Create strong-soap client from WSDL using promisified helper
+      const client = await createSoapClient(this.config.wsdlUrl, {
+        endpoint: this.config.baseUrl,
+        wsdl_options: {
+          timeout: 10000, // 10s timeout for WSDL loading
+        },
       });
 
       // Set the endpoint explicitly
@@ -195,45 +190,37 @@ export class GusSessionManager {
         `<wsa:Action xmlns:wsa="${WS_ADDRESSING_NS}">${zalogujAction}</wsa:Action>`,
       );
 
-      // Step 3: Perform login using Zaloguj operation
-      const loginResult = await new Promise<any>((resolve, reject) => {
-        client.Zaloguj(
-          { pKluczUzytkownika: this.config.userKey },
-          (
-            err: Error | null,
-            result: any,
-            envelope: any,
-            soapHeader: any,
-          ) => {
-            // Log actual SOAP request for debugging
-            if (client.lastRequest) {
-              this.logger.debug('Zaloguj SOAP Request (first 1200 chars)', {
-                request: client.lastRequest.substring(0, 1200),
-                correlationId,
-              });
-            }
+      // Step 3: Perform login using Zaloguj operation (using promisified helper)
+      const loginResult = await callSimpleSoapOperation(
+        client.Zaloguj,
+        { pKluczUzytkownika: this.config.userKey },
+        client,
+      ).catch((err: Error) => {
+        // Log error details for debugging
+        this.logger.warn('Zaloguj operation failed', {
+          error: err.message,
+          lastRequest: client.lastRequest
+            ? client.lastRequest.substring(0, 1200)
+            : 'N/A',
+          lastResponse: client.lastResponse
+            ? client.lastResponse.substring(0, 1200)
+            : 'N/A',
+          correlationId,
+        });
+        throw err;
+      });
 
-            if (err) {
-              this.logger.warn('Zaloguj operation failed', {
-                error: err.message,
-                lastRequest: client.lastRequest
-                  ? client.lastRequest.substring(0, 1200)
-                  : 'N/A',
-                lastResponse: client.lastResponse
-                  ? client.lastResponse.substring(0, 1200)
-                  : 'N/A',
-                correlationId,
-              });
-              reject(err);
-            } else {
-              this.logger.debug('Zaloguj operation completed successfully', {
-                resultIsNull: result === null,
-                correlationId,
-              });
-              resolve(result);
-            }
-          },
-        );
+      // Log actual SOAP request for debugging
+      if (client.lastRequest) {
+        this.logger.debug('Zaloguj SOAP Request (first 1200 chars)', {
+          request: client.lastRequest.substring(0, 1200),
+          correlationId,
+        });
+      }
+
+      this.logger.debug('Zaloguj operation completed successfully', {
+        resultIsNull: loginResult === null,
+        correlationId,
       });
 
       // Step 4: Validate and extract session ID using Zod schema
@@ -339,32 +326,23 @@ export class GusSessionManager {
     const session = this.currentSession; // Capture for TypeScript type narrowing
 
     try {
-      // Call Wyloguj operation using strong-soap
+      // Call Wyloguj operation using strong-soap (using promisified helper)
       // WS-Addressing headers will be added automatically by GusRequestInterceptor
-      await new Promise<void>((resolve, reject) => {
-        session.client.Wyloguj(
-          { pIdentyfikatorSesji: session.sessionId },
-          (err: Error | null) => {
-            if (err) {
-              this.logger.warn('Wyloguj operation failed', {
-                error: err.message,
-                correlationId,
-              });
-              reject(err);
-            } else {
-              this.logger.log('Wyloguj operation succeeded', {
-                correlationId,
-              });
-              resolve();
-            }
-          },
-        );
-      });
+      await callSimpleSoapOperation(
+        session.client.Wyloguj,
+        { pIdentyfikatorSesji: session.sessionId },
+        session.client,
+      );
 
+      this.logger.log('Wyloguj operation succeeded', { correlationId });
       this.logger.log('Successfully logged out from GUS', { correlationId });
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
+      this.logger.warn('Wyloguj operation failed', {
+        error: errorMessage,
+        correlationId,
+      });
       this.logger.warn('Failed to logout from GUS', {
         error: errorMessage,
         correlationId,

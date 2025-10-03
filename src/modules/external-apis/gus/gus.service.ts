@@ -13,6 +13,10 @@ import { BusinessException } from '../../../common/exceptions/business-exception
 import { GusSessionManager } from './gus-session.manager';
 import { GusRequestInterceptor } from './gus-request.interceptor';
 import { GusSession, GusConfig } from './interfaces/gus-session.interface';
+import {
+  createSoapClient,
+  callSoapOperation,
+} from './gus-soap.helpers';
 
 /**
  * GUS SOAP Service for Polish Statistical Office API
@@ -163,38 +167,33 @@ export class GusService {
         correlationId,
       });
 
-      const { result, envelope } = await new Promise<{ result: any; envelope: any }>(
-        (resolve, reject) => {
-          session.client.DaneSzukajPodmioty(
-            searchParams,
-            (err: Error | null, result: any, envelope: any) => {
-              // Log actual SOAP request for debugging
-              if (session.client.lastRequest) {
-                this.logger.debug('DaneSzukajPodmioty SOAP Request', {
-                  request: session.client.lastRequest.substring(0, 1000),
-                  correlationId,
-                });
-              }
+      // Call DaneSzukajPodmioty using promisified helper
+      const { result, envelope } = await callSoapOperation(
+        session.client.DaneSzukajPodmioty,
+        searchParams,
+        session.client,
+      ).catch((err: Error) => {
+        this.logger.error('DaneSzukajPodmioty operation failed', {
+          error: err.message,
+          nip: cleanNip,
+          correlationId,
+        });
+        throw err;
+      });
 
-              if (err) {
-                this.logger.error('DaneSzukajPodmioty operation failed', {
-                  error: err.message,
-                  nip: cleanNip,
-                  correlationId,
-                });
-                reject(err);
-              } else {
-                this.logger.log('DaneSzukajPodmioty operation succeeded', {
-                  resultType: typeof result,
-                  hasResult: !!result,
-                  correlationId,
-                });
-                resolve({ result, envelope });
-              }
-            }
-          );
-        }
-      );
+      // Log actual SOAP request for debugging
+      if (session.client.lastRequest) {
+        this.logger.debug('DaneSzukajPodmioty SOAP Request', {
+          request: session.client.lastRequest.substring(0, 1000),
+          correlationId,
+        });
+      }
+
+      this.logger.log('DaneSzukajPodmioty operation succeeded', {
+        resultType: typeof result,
+        hasResult: !!result,
+        correlationId,
+      });
 
       // Extract XML data from SOAP result
       // strong-soap returns the operation result directly
@@ -354,39 +353,34 @@ export class GusService {
         correlationId,
       });
 
-      const { result } = await new Promise<{ result: any; envelope: any }>(
-        (resolve, reject) => {
-          session.client.DanePobierzPelnyRaport(
-            reportParams,
-            (err: Error | null, result: any, envelope: any) => {
-              // Log actual SOAP request for debugging
-              if (session.client.lastRequest) {
-                this.logger.debug('DanePobierzPelnyRaport SOAP Request', {
-                  request: session.client.lastRequest.substring(0, 1000),
-                  correlationId,
-                });
-              }
+      // Call DanePobierzPelnyRaport using promisified helper
+      const { result } = await callSoapOperation(
+        session.client.DanePobierzPelnyRaport,
+        reportParams,
+        session.client,
+      ).catch((err: Error) => {
+        this.logger.error('DanePobierzPelnyRaport operation failed', {
+          error: err.message,
+          regon: cleanRegon,
+          reportName,
+          correlationId,
+        });
+        throw err;
+      });
 
-              if (err) {
-                this.logger.error('DanePobierzPelnyRaport operation failed', {
-                  error: err.message,
-                  regon: cleanRegon,
-                  reportName,
-                  correlationId,
-                });
-                reject(err);
-              } else {
-                this.logger.log('DanePobierzPelnyRaport operation succeeded', {
-                  resultType: typeof result,
-                  hasResult: !!result,
-                  correlationId,
-                });
-                resolve({ result, envelope });
-              }
-            }
-          );
-        }
-      );
+      // Log actual SOAP request for debugging
+      if (session.client.lastRequest) {
+        this.logger.debug('DanePobierzPelnyRaport SOAP Request', {
+          request: session.client.lastRequest.substring(0, 1000),
+          correlationId,
+        });
+      }
+
+      this.logger.log('DanePobierzPelnyRaport operation succeeded', {
+        resultType: typeof result,
+        hasResult: !!result,
+        correlationId,
+      });
 
       // Extract XML data from SOAP result
       const xmlData = result?.DanePobierzPelnyRaportResult || result?.danepobierzpelnyraportresult || null;
@@ -715,23 +709,14 @@ export class GusService {
    */
   async checkHealth(): Promise<'healthy' | 'unhealthy'> {
     try {
-      // Health check: Just verify we can create SOAP client from WSDL
+      // Health check: Just verify we can create SOAP client from WSDL (using promisified helper)
       // This confirms the service is responding and WSDL is accessible
       const client = await Promise.race<soap.Client>([
-        new Promise<soap.Client>((resolve, reject) => {
-          soap.createClient(
-            this.config.wsdlUrl,
-            {
-              endpoint: this.config.baseUrl,
-              wsdl_options: {
-                timeout: 5000,
-              },
-            },
-            (err: Error | null, client: soap.Client) => {
-              if (err) reject(err);
-              else resolve(client);
-            },
-          );
+        createSoapClient(this.config.wsdlUrl, {
+          endpoint: this.config.baseUrl,
+          wsdl_options: {
+            timeout: 5000,
+          },
         }),
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('Client creation timeout')), 5000),
