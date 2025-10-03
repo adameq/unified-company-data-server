@@ -1,4 +1,4 @@
-import { Injectable, Logger, Inject } from '@nestjs/common';
+import { Injectable, Logger, Inject, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createActor, fromPromise, toPromise } from 'xstate';
 import { z } from 'zod';
@@ -40,8 +40,10 @@ import { createRetryMachine } from '../state-machines/retry.machine';
 type UnifiedCompanyData = z.infer<typeof UnifiedCompanyDataSchema>;
 
 @Injectable()
-export class OrchestrationService {
+export class OrchestrationService implements OnModuleInit {
   private readonly logger = new Logger(OrchestrationService.name);
+  private configuredMachine: any;
+  private machineConfig!: OrchestrationMachineConfig;
 
   constructor(
     @Inject(ORCHESTRATION_MACHINE) private readonly baseMachine: any,
@@ -54,6 +56,287 @@ export class OrchestrationService {
     this.logger.log('OrchestrationService initialized', {
       architecture: 'XState v5 with DI',
       healthCheckStrategy: 'live (no caching)',
+    });
+  }
+
+  /**
+   * Module initialization hook - configure state machine once at startup
+   *
+   * This method is called by NestJS after all dependencies are injected.
+   * Pre-configures the orchestration machine to avoid repeated configuration
+   * on every request.
+   *
+   * Performance impact:
+   * - Before: Config + machine.provide() executed per request (100s-1000s times)
+   * - After: Executed once at module initialization
+   */
+  async onModuleInit() {
+    this.machineConfig = this.buildMachineConfig();
+    this.configuredMachine = this.configureMachine();
+
+    this.logger.log('Orchestration machine pre-configured at startup', {
+      retryConfig: this.machineConfig.retry,
+      timeouts: this.machineConfig.timeouts,
+    });
+  }
+
+  /**
+   * Build machine configuration from environment variables
+   *
+   * Executed once at module initialization instead of per-request.
+   * All values are validated by Zod schema at app startup.
+   */
+  private buildMachineConfig(): OrchestrationMachineConfig {
+    return {
+      timeouts: {
+        total: this.configService.get('ORCHESTRATION_TIMEOUT', { infer: true }),
+        perService: this.configService.get('EXTERNAL_API_TIMEOUT', { infer: true }),
+      },
+      retry: {
+        gus: {
+          maxRetries: this.configService.get('GUS_MAX_RETRIES', { infer: true }),
+          initialDelay: this.configService.get('GUS_INITIAL_DELAY', { infer: true }),
+        },
+        krs: {
+          maxRetries: this.configService.get('KRS_MAX_RETRIES', { infer: true }),
+          initialDelay: this.configService.get('KRS_INITIAL_DELAY', { infer: true }),
+        },
+        ceidg: {
+          maxRetries: this.configService.get('CEIDG_MAX_RETRIES', { infer: true }),
+          initialDelay: this.configService.get('CEIDG_INITIAL_DELAY', { infer: true }),
+        },
+      },
+    };
+  }
+
+  /**
+   * Configure orchestration machine with all actors
+   *
+   * Executed once at module initialization instead of per-request.
+   * Actors are defined as closures that capture service dependencies
+   * but receive correlationId dynamically from input (not closure).
+   *
+   * Key difference from previous implementation:
+   * - Before: correlationId captured in closure (per-request scope)
+   * - After: correlationId passed via input (request-specific data)
+   * - Config: Uses this.machineConfig (pre-built at startup)
+   */
+  private configureMachine() {
+    return this.baseMachine.provide({
+      actors: {
+        // GUS Classification with retry logic via state machine
+        retryGusClassification: fromPromise(async ({ input }: any) => {
+          // correlationId comes from input, not closure
+          const { nip, correlationId } = input;
+
+          const retryMachine = createRetryMachine(
+            'GUS',
+            correlationId,
+            this.logger,
+            this.machineConfig.retry.gus, // Use pre-built config
+          ).provide({
+            actors: {
+              makeApiRequest: fromPromise(async ({ input: actorInput }: any) => {
+                const { context: retryContext } = actorInput;
+                const nip = (retryContext as any).nip;
+                const correlationId = retryContext.correlationId;
+                return this.gusService.getClassificationByNip(nip, correlationId);
+              }),
+            },
+          });
+
+          const actor = createActor(retryMachine, { input: { nip, correlationId } });
+
+          return new Promise((resolve, reject) => {
+            actor.subscribe({
+              complete: () => {
+                const snapshot = actor.getSnapshot();
+                if (snapshot.value === 'success') {
+                  resolve(snapshot.output ?? snapshot.context?.result);
+                } else {
+                  reject(
+                    snapshot.output ||
+                      snapshot.context?.lastError ||
+                      new Error('GUS retry failed'),
+                  );
+                }
+              },
+              error: (err) => reject(err),
+            });
+            actor.start();
+          });
+        }),
+
+        // GUS Detailed Data with retry logic via state machine
+        retryGusDetailedData: fromPromise(async ({ input }: any) => {
+          const { regon, silosId, correlationId } = input;
+
+          const retryMachine = createRetryMachine(
+            'GUS',
+            correlationId,
+            this.logger,
+            this.machineConfig.retry.gus,
+          ).provide({
+            actors: {
+              makeApiRequest: fromPromise(async ({ input: actorInput }: any) => {
+                const { context: retryContext } = actorInput;
+                return this.gusService.getDetailedReport(
+                  (retryContext as any).regon,
+                  (retryContext as any).silosId,
+                  retryContext.correlationId,
+                );
+              }),
+            },
+          });
+
+          const actor = createActor(retryMachine, { input: { regon, silosId, correlationId } });
+
+          return new Promise((resolve, reject) => {
+            actor.subscribe({
+              complete: () => {
+                const snapshot = actor.getSnapshot();
+                if (snapshot.value === 'success') {
+                  resolve(snapshot.output ?? snapshot.context?.result);
+                } else {
+                  reject(
+                    snapshot.output ||
+                      snapshot.context?.lastError ||
+                      new Error('GUS detailed data retry failed'),
+                  );
+                }
+              },
+              error: (err) => reject(err),
+            });
+            actor.start();
+          });
+        }),
+
+        // KRS Data with retry logic via state machine
+        retryKrsData: fromPromise(async ({ input }: any) => {
+          const { krsNumber, registry, correlationId } = input;
+
+          const retryMachine = createRetryMachine(
+            'KRS',
+            correlationId,
+            this.logger,
+            this.machineConfig.retry.krs,
+          ).provide({
+            actors: {
+              makeApiRequest: fromPromise(async ({ input: actorInput }: any) => {
+                const { context: retryContext } = actorInput;
+                return this.krsService.fetchFromRegistry(
+                  (retryContext as any).krsNumber,
+                  (retryContext as any).registry,
+                  retryContext.correlationId,
+                );
+              }),
+            },
+          });
+
+          const actor = createActor(retryMachine, { input: { krsNumber, registry, correlationId } });
+
+          return new Promise((resolve, reject) => {
+            actor.subscribe({
+              complete: () => {
+                const snapshot = actor.getSnapshot();
+                if (snapshot.value === 'success') {
+                  resolve(snapshot.output ?? snapshot.context?.result);
+                } else {
+                  reject(
+                    snapshot.output ||
+                      snapshot.context?.lastError ||
+                      new Error('KRS retry failed'),
+                  );
+                }
+              },
+              error: (err) => reject(err),
+            });
+            actor.start();
+          });
+        }),
+
+        // CEIDG Data with retry logic via state machine
+        retryCeidgData: fromPromise(async ({ input }: any) => {
+          const { nip, correlationId } = input;
+
+          const retryMachine = createRetryMachine(
+            'CEIDG',
+            correlationId,
+            this.logger,
+            this.machineConfig.retry.ceidg,
+          ).provide({
+            actors: {
+              makeApiRequest: fromPromise(async ({ input: actorInput }: any) => {
+                const { context: retryContext } = actorInput;
+                return this.ceidgService.getCompanyByNip(
+                  (retryContext as any).nip,
+                  retryContext.correlationId,
+                );
+              }),
+            },
+          });
+
+          const actor = createActor(retryMachine, { input: { nip, correlationId } });
+
+          return new Promise((resolve, reject) => {
+            actor.subscribe({
+              complete: () => {
+                const snapshot = actor.getSnapshot();
+                if (snapshot.value === 'success') {
+                  resolve(snapshot.output ?? snapshot.context?.result);
+                } else {
+                  reject(
+                    snapshot.output ||
+                      snapshot.context?.lastError ||
+                      new Error('CEIDG retry failed'),
+                  );
+                }
+              },
+              error: (err) => reject(err),
+            });
+            actor.start();
+          });
+        }),
+
+        // Inactive company mapping (no retry needed)
+        mapInactiveCompany: fromPromise(async ({ input }: any) => {
+          const context = input;
+          this.logger.log('mapInactiveCompany started', {
+            correlationId: context.correlationId,
+            endDate: context.classification?.DataZakonczeniaDzialalnosci,
+          });
+
+          const mappingContext = {
+            nip: context.nip,
+            correlationId: context.correlationId,
+            gusClassification: context.classification,
+            gusDetailedData: undefined,
+            krsData: undefined,
+            ceidgData: undefined,
+          };
+
+          return this.unifiedDataMapper.mapToUnifiedFormat(mappingContext);
+        }),
+
+        // Unified data mapping (no retry needed)
+        mapToUnifiedFormat: fromPromise(async ({ input }: any) => {
+          const context = input;
+          this.logger.log('mapToUnifiedFormat started', {
+            correlationId: context.correlationId,
+          });
+
+          const mappingContext = {
+            nip: context.nip,
+            correlationId: context.correlationId,
+            gusClassification: context.classification,
+            gusDetailedData: context.gusData,
+            krsData: context.krsData,
+            ceidgData: context.ceidgData,
+          };
+
+          return this.unifiedDataMapper.mapToUnifiedFormat(mappingContext);
+        }),
+      },
     });
   }
 
@@ -75,214 +358,13 @@ export class OrchestrationService {
     );
 
     try {
-      // Build machine configuration from ConfigService
-      // ConfigService returns correctly typed numbers (validated by Zod schema at app startup)
-      const config: OrchestrationMachineConfig = {
-        timeouts: {
-          total: this.configService.get('ORCHESTRATION_TIMEOUT', { infer: true }),
-          perService: this.configService.get('EXTERNAL_API_TIMEOUT', { infer: true }),
-        },
-        retry: {
-          gus: {
-            maxRetries: this.configService.get('GUS_MAX_RETRIES', { infer: true }),
-            initialDelay: this.configService.get('GUS_INITIAL_DELAY', { infer: true }),
-          },
-          krs: {
-            maxRetries: this.configService.get('KRS_MAX_RETRIES', { infer: true }),
-            initialDelay: this.configService.get('KRS_INITIAL_DELAY', { infer: true }),
-          },
-          ceidg: {
-            maxRetries: this.configService.get('CEIDG_MAX_RETRIES', { infer: true }),
-            initialDelay: this.configService.get('CEIDG_INITIAL_DELAY', { infer: true }),
-          },
-        },
-      };
-
-      this.logger.log(`🔄 Configuring XState orchestration machine with DI`, {
-        correlationId,
-        architecture: 'XState v5 setup() + nested provide()',
-      });
-
-      // Use fromPromise to wrap retry machines for proper orchestration compatibility
-      // Pattern: fromPromise runs retry state machine actor and returns its result as a promise
-      const configuredMachine = this.baseMachine.provide({
-        actors: {
-          // GUS Classification with retry logic via state machine
-          retryGusClassification: fromPromise(async ({ input }: any) => {
-            const retryMachine = createRetryMachine('GUS', correlationId, this.logger, config.retry.gus).provide({
-              actors: {
-                makeApiRequest: fromPromise(async ({ input: actorInput }: any) => {
-                  const { context: retryContext } = actorInput;
-                  const nip = (retryContext as any).nip;
-                  const correlationId = retryContext.correlationId;
-                  return this.gusService.getClassificationByNip(nip, correlationId);
-                }),
-              },
-            });
-
-            const actor = createActor(retryMachine, { input });
-
-            return new Promise((resolve, reject) => {
-              actor.subscribe({
-                complete: () => {
-                  const snapshot = actor.getSnapshot();
-                  if (snapshot.value === 'success') {
-                    resolve(snapshot.output ?? snapshot.context?.result);
-                  } else {
-                    reject(snapshot.output || snapshot.context?.lastError || new Error('GUS retry failed'));
-                  }
-                },
-                error: (err) => reject(err),
-              });
-              actor.start();
-            });
-          }),
-
-          // GUS Detailed Data with retry logic via state machine
-          retryGusDetailedData: fromPromise(async ({ input }: any) => {
-            const retryMachine = createRetryMachine('GUS', correlationId, this.logger, config.retry.gus).provide({
-              actors: {
-                makeApiRequest: fromPromise(async ({ input: actorInput }: any) => {
-                  const { context: retryContext } = actorInput;
-                  return this.gusService.getDetailedReport(
-                    (retryContext as any).regon,
-                    (retryContext as any).silosId,
-                    retryContext.correlationId
-                  );
-                }),
-              },
-            });
-
-            const actor = createActor(retryMachine, { input });
-
-            return new Promise((resolve, reject) => {
-              actor.subscribe({
-                complete: () => {
-                  const snapshot = actor.getSnapshot();
-                  if (snapshot.value === 'success') {
-                    resolve(snapshot.output ?? snapshot.context?.result);
-                  } else {
-                    reject(snapshot.output || snapshot.context?.lastError || new Error('GUS detailed data retry failed'));
-                  }
-                },
-                error: (err) => reject(err),
-              });
-              actor.start();
-            });
-          }),
-
-          // KRS Data with retry logic via state machine
-          retryKrsData: fromPromise(async ({ input }: any) => {
-            const retryMachine = createRetryMachine('KRS', correlationId, this.logger, config.retry.krs).provide({
-              actors: {
-                makeApiRequest: fromPromise(async ({ input: actorInput }: any) => {
-                  const { context: retryContext } = actorInput;
-                  return this.krsService.fetchFromRegistry(
-                    (retryContext as any).krsNumber,
-                    (retryContext as any).registry,
-                    retryContext.correlationId
-                  );
-                }),
-              },
-            });
-
-            const actor = createActor(retryMachine, { input });
-
-            return new Promise((resolve, reject) => {
-              actor.subscribe({
-                complete: () => {
-                  const snapshot = actor.getSnapshot();
-                  if (snapshot.value === 'success') {
-                    resolve(snapshot.output ?? snapshot.context?.result);
-                  } else {
-                    reject(snapshot.output || snapshot.context?.lastError || new Error('KRS retry failed'));
-                  }
-                },
-                error: (err) => reject(err),
-              });
-              actor.start();
-            });
-          }),
-
-          // CEIDG Data with retry logic via state machine
-          retryCeidgData: fromPromise(async ({ input }: any) => {
-            const retryMachine = createRetryMachine('CEIDG', correlationId, this.logger, config.retry.ceidg).provide({
-              actors: {
-                makeApiRequest: fromPromise(async ({ input: actorInput }: any) => {
-                  const { context: retryContext } = actorInput;
-                  return this.ceidgService.getCompanyByNip(
-                    (retryContext as any).nip,
-                    retryContext.correlationId
-                  );
-                }),
-              },
-            });
-
-            const actor = createActor(retryMachine, { input });
-
-            return new Promise((resolve, reject) => {
-              actor.subscribe({
-                complete: () => {
-                  const snapshot = actor.getSnapshot();
-                  if (snapshot.value === 'success') {
-                    resolve(snapshot.output ?? snapshot.context?.result);
-                  } else {
-                    reject(snapshot.output || snapshot.context?.lastError || new Error('CEIDG retry failed'));
-                  }
-                },
-                error: (err) => reject(err),
-              });
-              actor.start();
-            });
-          }),
-
-          // Inactive company mapping (no retry needed)
-          mapInactiveCompany: fromPromise(async ({ input }: any) => {
-            const context = input;
-            this.logger.log('mapInactiveCompany started', {
-              correlationId: context.correlationId,
-              endDate: context.classification?.DataZakonczeniaDzialalnosci,
-            });
-
-            const mappingContext = {
-              nip: context.nip,
-              correlationId: context.correlationId,
-              gusClassification: context.classification,
-              gusDetailedData: undefined,
-              krsData: undefined,
-              ceidgData: undefined,
-            };
-
-            return this.unifiedDataMapper.mapToUnifiedFormat(mappingContext);
-          }),
-
-          // Unified data mapping (no retry needed)
-          mapToUnifiedFormat: fromPromise(async ({ input }: any) => {
-            const context = input;
-            this.logger.log('mapToUnifiedFormat started', {
-              correlationId: context.correlationId,
-            });
-
-            const mappingContext = {
-              nip: context.nip,
-              correlationId: context.correlationId,
-              gusClassification: context.classification,
-              gusDetailedData: context.gusData,
-              krsData: context.krsData,
-              ceidgData: context.ceidgData,
-            };
-
-            return this.unifiedDataMapper.mapToUnifiedFormat(mappingContext);
-          }),
-        },
-      });
-
-      // Create actor with input (includes config and logger in context)
-      const actor = createActor(configuredMachine, {
+      // Create actor from pre-configured machine (configured once at module init)
+      // No per-request machine configuration overhead
+      const actor = createActor(this.configuredMachine, {
         input: {
           nip,
           correlationId,
-          config,
+          config: this.machineConfig,
           logger: this.logger,
         },
       });
