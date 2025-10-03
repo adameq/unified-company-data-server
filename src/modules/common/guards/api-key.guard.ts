@@ -10,11 +10,11 @@ import {
 import { Reflector } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
-import type { Environment } from '../../../config/environment.schema';
+import type { Environment } from '@config/environment.schema';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { extractFromRequest } from '../utils/correlation-id.utils';
 import { extractBearerToken, maskApiKey } from '../utils/auth.utils';
-import { BusinessException } from '../../../common/exceptions/business-exceptions';
+import { BusinessException } from '@common/exceptions/business-exceptions';
 
 /**
  * API Key Authentication Guard

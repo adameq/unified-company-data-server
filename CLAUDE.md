@@ -628,37 +628,76 @@ Comprehensive error handling with:
 
 ### Import Strategy
 
-This project uses **relative imports exclusively**.
+This project uses **path aliases** for cleaner, more maintainable imports.
 
-**Why relative imports?**
+**Why path aliases?**
 
-1. **NestJS Best Practices**: NestJS dependency injection works better with relative imports, avoiding circular dependency issues
-2. **Runtime Compatibility**: `moduleResolution: "nodenext"` in TypeScript works seamlessly with relative imports
-3. **No Runtime Overhead**: Path aliases require runtime mapping (tsconfig-paths, module-alias), relative imports work natively
-4. **Jest Compatibility**: Tests run without additional Jest module mapping configuration
-5. **Clarity**: Relative imports make the directory structure immediately visible in the code
+1. **Readability**: `@schemas/unified-company-data.schema` is clearer than `'../../../schemas/unified-company-data.schema'`
+2. **Refactoring**: Moving files doesn't require updating import paths
+3. **Industry Standard**: Follows best practices in large TypeScript/NestJS projects
+4. **No Circular Dependency Issues**: Path aliases don't cause circular dependencies - architecture does
+5. **Zero Runtime Overhead**: NestJS CLI and ts-node support path aliases natively via `tsconfig-paths` (already installed)
 
-**No Path Aliases**
+**Path Alias Mapping**
 
-This project does NOT use path aliases (tsconfig.json `paths` field).
-All imports use relative paths for clarity and NestJS compatibility.
+```typescript
+// tsconfig.json paths configuration
+"paths": {
+  "@/*": ["src/*"],              // Root src directory
+  "@common/*": ["src/common/*"],  // Common utilities, exceptions, validators
+  "@config/*": ["src/config/*"],  // Configuration files
+  "@schemas/*": ["src/schemas/*"], // Zod schemas
+  "@modules/*": ["src/modules/*"], // NestJS modules
+  "@types/*": ["src/types/*"]     // TypeScript type definitions
+}
+```
 
 **Import Examples**
 
 ```typescript
-// ✅ Correct - Relative import
+// ✅ Correct - Path aliases
+import { UnifiedCompanyDataSchema } from '@schemas/unified-company-data.schema';
+import { GusService } from '@modules/external-apis/gus/gus.service';
+import { BusinessException } from '@common/exceptions/business-exceptions';
+import type { Environment } from '@config/environment.schema';
+
+// ❌ Avoid - Relative imports for cross-module dependencies
 import { UnifiedCompanyDataSchema } from '../../../schemas/unified-company-data.schema';
 import { GusService } from '../../external-apis/gus/gus.service';
-import { BusinessException } from '../../../common/exceptions/business-exceptions';
+
+// ✅ OK - Relative imports for same-directory or parent directory (one level up)
+import { OrchestrationService } from '../services/orchestration.service';
+import { CompanyRequestDto } from './company-request.dto';
+```
+
+**When to Use Relative vs Path Aliases**
+
+- **Path aliases**: Cross-module imports, importing from `common/`, `schemas/`, `config/`
+- **Relative imports**: Same module, same directory, or immediate parent/child directories
+
+**Jest Configuration**
+
+Tests automatically support path aliases via `moduleNameMapper` in `package.json`:
+
+```json
+"moduleNameMapper": {
+  "^@/(.*)$": "<rootDir>/src/$1",
+  "^@common/(.*)$": "<rootDir>/src/common/$1",
+  "^@config/(.*)$": "<rootDir>/src/config/$1",
+  "^@schemas/(.*)$": "<rootDir>/src/schemas/$1",
+  "^@modules/(.*)$": "<rootDir>/src/modules/$1",
+  "^@types/(.*)$": "<rootDir>/src/types/$1"
+}
 ```
 
 **When You See Module Resolution Errors**
 
 If you encounter module resolution errors:
-1. Check that the file path exists relative to the importing file
-2. Verify you're using relative imports (e.g., `'../../../schemas/...'`)
-3. Ensure TypeScript `baseUrl` is set to `./` in tsconfig.json
+1. Verify the alias exists in `tsconfig.json` `paths` field
+2. Check that `moduleNameMapper` is configured in `package.json` (for Jest)
+3. Ensure `tsconfig-paths` is installed (`pnpm list tsconfig-paths`)
 4. Run `pnpm exec tsc --noEmit` to check for TypeScript errors
+5. Restart your IDE/language server after changing `tsconfig.json`
 
 ## Troubleshooting
 

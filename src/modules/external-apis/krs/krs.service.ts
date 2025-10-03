@@ -6,9 +6,9 @@ import {
   createErrorResponse,
   ErrorResponseCreators,
   type ErrorResponse,
-} from '../../../schemas/error-response.schema';
-import { type Environment } from '../../../config/environment.schema';
-import { BusinessException } from '../../../common/exceptions/business-exceptions';
+} from '@schemas/error-response.schema';
+import { type Environment } from '@config/environment.schema';
+import { BusinessException } from '@common/exceptions/business-exceptions';
 
 /**
  * KRS REST Service for Polish Court Register API

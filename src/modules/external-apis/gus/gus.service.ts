@@ -7,9 +7,9 @@ import { stripPrefix } from 'xml2js/lib/processors';
 import {
   createErrorResponse,
   type ErrorResponse,
-} from '../../../schemas/error-response.schema';
-import { type Environment } from '../../../config/environment.schema';
-import { BusinessException } from '../../../common/exceptions/business-exceptions';
+} from '@schemas/error-response.schema';
+import { type Environment } from '@config/environment.schema';
+import { BusinessException } from '@common/exceptions/business-exceptions';
 import { GusSessionManager } from './gus-session.manager';
 import { GusRequestInterceptor } from './gus-request.interceptor';
 import { GusRateLimiterService } from './gus-rate-limiter.service';

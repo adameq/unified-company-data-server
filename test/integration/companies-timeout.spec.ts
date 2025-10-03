@@ -42,8 +42,6 @@ describe('Integration Tests - Timeout Handling', () => {
 
       expect(responseTime).toBeLessThan(2500); // 2.5 seconds requirement
       expect(response.body).toHaveProperty('nip');
-
-      console.log(`✓ Normal request response time: ${responseTime}ms (target: <2500ms)`);
     });
 
     it('should handle multiple concurrent requests within time limits', async () => {
@@ -69,8 +67,6 @@ describe('Integration Tests - Timeout Handling', () => {
 
       // Concurrent requests shouldn't take much longer than sequential
       expect(totalTime).toBeLessThan(5000); // Reasonable concurrent processing time
-
-      console.log(`✓ Concurrent requests total time: ${totalTime}ms for ${concurrentRequests} requests`);
     });
   });
 
@@ -122,9 +118,6 @@ describe('Integration Tests - Timeout Handling', () => {
 
       // Verify total request timeout is set to 15 seconds (15000ms)
       expect(requestTimeout).toBe(15000);
-
-      console.log(`✓ External API timeout configured: ${externalApiTimeout}ms`);
-      console.log(`✓ Total request timeout configured: ${requestTimeout}ms`);
     });
 
     it('should verify retry configuration for timeout scenarios', async () => {
@@ -151,10 +144,6 @@ describe('Integration Tests - Timeout Handling', () => {
       expect(ceidgMaxRetries).toBeLessThanOrEqual(5);
       expect(ceidgInitialDelay).toBeGreaterThanOrEqual(50);
       expect(ceidgInitialDelay).toBeLessThanOrEqual(2000);
-
-      console.log(`✓ GUS retry config: ${gusMaxRetries} retries, ${gusInitialDelay}ms initial delay`);
-      console.log(`✓ KRS retry config: ${krsMaxRetries} retries, ${krsInitialDelay}ms initial delay`);
-      console.log(`✓ CEIDG retry config: ${ceidgMaxRetries} retries, ${ceidgInitialDelay}ms initial delay`);
     });
   });
 
@@ -210,8 +199,6 @@ describe('Integration Tests - Timeout Handling', () => {
 
       // Rapid requests shouldn't cause timeout accumulation
       expect(totalTime).toBeLessThan(8000); // Should be well under individual timeout limits
-
-      console.log(`✓ Rapid successive requests completed in: ${totalTime}ms`);
     });
   });
 
@@ -249,12 +236,6 @@ describe('Integration Tests - Timeout Handling', () => {
       expect(avgResponseTime).toBeLessThan(2500); // Average should be under 2.5s
       expect(maxResponseTime).toBeLessThan(3000); // Max should be reasonable
       expect(maxResponseTime - minResponseTime).toBeLessThan(1500); // Variation tolerance for real external APIs
-
-      console.log(`✓ Load test results:`);
-      console.log(`  Average response time: ${avgResponseTime.toFixed(0)}ms`);
-      console.log(`  Min response time: ${minResponseTime}ms`);
-      console.log(`  Max response time: ${maxResponseTime}ms`);
-      console.log(`  Response time variation: ${(maxResponseTime - minResponseTime).toFixed(0)}ms`);
     },
     15000); // 15 second timeout
 

@@ -2,17 +2,17 @@ import { Injectable, Logger, Inject, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createActor, fromPromise, toPromise, type AnyActorRef } from 'xstate';
 import { z } from 'zod';
-import { UnifiedCompanyDataSchema } from '../../../schemas/unified-company-data.schema';
+import { UnifiedCompanyDataSchema } from '@schemas/unified-company-data.schema';
 import {
   createErrorResponse,
   type ErrorResponse,
-} from '../../../schemas/error-response.schema';
-import { GusService } from '../../external-apis/gus/gus.service';
-import { KrsService } from '../../external-apis/krs/krs.service';
-import { CeidgV3Service } from '../../external-apis/ceidg/ceidg-v3.service';
+} from '@schemas/error-response.schema';
+import { GusService } from '@modules/external-apis/gus/gus.service';
+import { KrsService } from '@modules/external-apis/krs/krs.service';
+import { CeidgV3Service } from '@modules/external-apis/ceidg/ceidg-v3.service';
 import { UnifiedDataMapper } from '../mappers/unified-data.mapper';
-import { BusinessException } from '../../../common/exceptions/business-exceptions';
-import type { Environment } from '../../../config/environment.schema';
+import { BusinessException } from '@common/exceptions/business-exceptions';
+import type { Environment } from '@config/environment.schema';
 import {
   ORCHESTRATION_MACHINE,
   type OrchestrationMachineConfig,

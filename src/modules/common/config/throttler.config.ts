@@ -5,7 +5,7 @@ import {
   ThrottlerModuleOptions,
 } from '@nestjs/throttler';
 import { Request } from 'express';
-import { type Environment } from '../../../config/environment.schema';
+import { type Environment } from '@config/environment.schema';
 import { extractBearerToken, maskApiKey } from '../utils/auth.utils';
 
 /**

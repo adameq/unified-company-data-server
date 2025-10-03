@@ -3,7 +3,7 @@ import {
   type ErrorResponse,
   type ErrorCode,
   ERROR_CODES,
-} from '../../../schemas/error-response.schema';
+} from '@schemas/error-response.schema';
 
 /**
  * Validation Error Strategy

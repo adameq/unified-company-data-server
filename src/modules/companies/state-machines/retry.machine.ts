@@ -141,7 +141,10 @@ export const createRetryMachine = (
     },
     actors: {
       // makeApiRequest actor MUST be provided via .provide() in parent machine
-      // No stub implementation - parent must always provide concrete actor
+      // Stub implementation throws error if not overridden
+      makeApiRequest: fromPromise(async () => {
+        throw new Error('makeApiRequest actor must be provided via .provide() by parent machine');
+      }),
 
       // scheduleRetry actor (concrete implementation)
       scheduleRetry: fromCallback(({ sendBack, input }) => {

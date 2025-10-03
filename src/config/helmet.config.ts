@@ -1,5 +1,4 @@
-import helmet from 'helmet';
-import { HelmetOptions } from 'helmet';
+import helmet, { HelmetOptions } from 'helmet';
 
 /**
  * Helmet Security Configuration for REST API
@@ -37,7 +36,7 @@ import { HelmetOptions } from 'helmet';
  * Note: Swagger UI may require additional CSP relaxation.
  * See `getHelmetConfigForSwagger()` for Swagger-specific CSP.
  */
-const RESTRICTIVE_CSP_DIRECTIVES: helmet.ContentSecurityPolicyOptions['directives'] = {
+const RESTRICTIVE_CSP_DIRECTIVES: Record<string, string[]> = {
   // Default policy: only same-origin resources
   defaultSrc: ["'self'"],
 
@@ -90,7 +89,7 @@ const RESTRICTIVE_CSP_DIRECTIVES: helmet.ContentSecurityPolicyOptions['directive
  * Swagger UI requires inline styles and specific external resources.
  * This configuration maintains security while allowing Swagger to function.
  */
-const SWAGGER_CSP_DIRECTIVES: helmet.ContentSecurityPolicyOptions['directives'] = {
+const SWAGGER_CSP_DIRECTIVES: Record<string, string[]> = {
   defaultSrc: ["'self'"],
   scriptSrc: ["'self'", "'unsafe-inline'"], // Swagger requires inline scripts
   styleSrc: ["'self'", "'unsafe-inline'"], // Swagger requires inline styles

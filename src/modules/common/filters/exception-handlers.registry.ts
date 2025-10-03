@@ -5,8 +5,8 @@ import {
   type ErrorResponse,
   type ErrorCode,
   ERROR_CODES,
-} from '../../../schemas/error-response.schema';
-import { BusinessException } from '../../../common/exceptions/business-exceptions';
+} from '@schemas/error-response.schema';
+import { BusinessException } from '@common/exceptions/business-exceptions';
 import { ValidationErrorStrategy } from './validation-error.strategy';
 
 /**

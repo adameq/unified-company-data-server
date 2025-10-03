@@ -41,8 +41,6 @@ describe('Integration Tests - Rate Limiting', () => {
 
       // Verify rate limit is set to 100 requests per minute per API key
       expect(rateLimitPerMinute).toBe(100);
-
-      console.log(`✓ Rate limit configured: ${rateLimitPerMinute} requests per minute per API key`);
     });
 
     it('should verify API key configuration exists', async () => {
@@ -58,8 +56,6 @@ describe('Integration Tests - Rate Limiting', () => {
       apiKeys.forEach((key: string) => {
         expect(key.length).toBeGreaterThanOrEqual(32);
       });
-
-      console.log(`✓ API keys configured: ${apiKeys.length} keys available`);
     });
   });
 
@@ -76,8 +72,6 @@ describe('Integration Tests - Rate Limiting', () => {
 
       expect(response.body).toHaveProperty('nip');
       expect(response.body.nip).toBe(TEST_NIPS.VALID_LEGAL_ENTITY);
-
-      console.log('✓ Valid API key authentication successful');
     });
 
     it('should reject requests without API key', async () => {
@@ -93,8 +87,6 @@ describe('Integration Tests - Rate Limiting', () => {
       expect(response.body).toHaveProperty('message');
       expect(response.body.message).toContain('API key is required');
       expect(response.body).toHaveProperty('correlationId');
-
-      console.log('✓ Requests without API key are properly rejected');
     });
 
     it('should reject requests with invalid API key', async () => {
@@ -109,8 +101,6 @@ describe('Integration Tests - Rate Limiting', () => {
       expect(response.body).toHaveProperty('errorCode', 'INVALID_API_KEY');
       expect(response.body).toHaveProperty('message', 'Invalid API key provided.');
       expect(response.body).toHaveProperty('correlationId');
-
-      console.log('✓ Invalid API keys are properly rejected');
     });
 
     it(
@@ -143,13 +133,6 @@ describe('Integration Tests - Rate Limiting', () => {
           expect(response.status).toBe(200);
           expect(response.body.nip).toBe(testNip);
         });
-
-        console.log(
-          `✓ ${rapidRequests} rapid requests completed in ${totalTime}ms`,
-        );
-        console.log(
-          '✓ Rate limiting disabled in test environment (enabled in production)',
-        );
       },
       10000,
     );
@@ -186,8 +169,6 @@ describe('Integration Tests - Rate Limiting', () => {
       // 2. Response includes Retry-After header
       // 3. Error response matches the structure above
       // 4. Rate limit resets after one minute
-
-      console.log(`✓ Rate limit error response format documented`);
     });
 
     it('should document per-API-key rate limiting behavior', async () => {
@@ -209,8 +190,6 @@ describe('Integration Tests - Rate Limiting', () => {
       // 2. Rate limit for key A doesn't affect key B
       // 3. Each key gets its own rate limit reset timer
       // 4. Proper isolation between different API key rate limits
-
-      console.log(`✓ Per-API-key rate limiting behavior documented`);
     });
 
     it('should document retry-after header behavior', async () => {
@@ -230,8 +209,6 @@ describe('Integration Tests - Rate Limiting', () => {
 
       // Production rate limit responses include these headers
       // to help clients understand and respect rate limits
-
-      console.log(`✓ Rate limit headers behavior documented`);
     });
   });
 
@@ -269,8 +246,6 @@ describe('Integration Tests - Rate Limiting', () => {
       // 3. Make 5 more requests to reach exactly 100 - all succeed
       // 4. Make 101st request - returns 429 with RATE_LIMIT_EXCEEDED
       // 5. Retry-After header indicates when to retry
-
-      console.log(`✓ Gradual rate limit behavior documented`);
     },
     10000); // 10 second timeout
 
@@ -291,8 +266,6 @@ describe('Integration Tests - Rate Limiting', () => {
       // 3. Wait for rate limit window to reset (60 seconds)
       // 4. Requests work again after reset
       // 5. Rate limit counters are properly reset to 0
-
-      console.log(`✓ Rate limit reset behavior documented`);
     });
 
     it('should document multiple API keys isolation', async () => {
@@ -313,8 +286,6 @@ describe('Integration Tests - Rate Limiting', () => {
       // 4. API key A remains rate limited
       // 5. Proper isolation verified by CustomThrottlerGuard.getTracker
       // 6. Each key has independent rate limit window
-
-      console.log(`✓ Multiple API keys isolation behavior documented`);
     });
 
     it('should document correlation ID tracking in rate limit errors', async () => {
@@ -338,8 +309,6 @@ describe('Integration Tests - Rate Limiting', () => {
       // 4. Logs contain correlation ID for rate limit events
       // 5. Correlation ID is preserved through rate limiting logic
       // 6. Error tracking maintains request traceability
-
-      console.log(`✓ Correlation ID tracking in rate limit errors documented`);
     });
   });
 });

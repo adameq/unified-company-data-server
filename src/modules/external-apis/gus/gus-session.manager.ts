@@ -4,8 +4,8 @@ import { z } from 'zod';
 import {
   createErrorResponse,
   type ErrorResponse,
-} from '../../../schemas/error-response.schema';
-import { BusinessException } from '../../../common/exceptions/business-exceptions';
+} from '@schemas/error-response.schema';
+import { BusinessException } from '@common/exceptions/business-exceptions';
 import type { GusSession, GusConfig } from './interfaces/gus-session.interface';
 import {
   createSoapClient,

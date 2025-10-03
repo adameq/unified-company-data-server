@@ -3,7 +3,7 @@ import {
   type ErrorResponse,
   type ErrorCode,
   getHttpStatusForErrorCode,
-} from '../../schemas/error-response.schema';
+} from '@schemas/error-response.schema';
 
 /**
  * Business Exception

@@ -7,7 +7,7 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
-import { getHttpStatusForErrorCode } from '../../../schemas/error-response.schema';
+import { getHttpStatusForErrorCode } from '@schemas/error-response.schema';
 import { generateCorrelationId, extractFromRequest } from '../utils/correlation-id.utils';
 import { ExceptionHandlerRegistry } from './exception-handlers.registry';
 

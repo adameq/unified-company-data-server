@@ -4,7 +4,7 @@ import { setup, fromPromise, assign } from 'xstate';
 import {
   OrchestrationContext,
   createInitialContext,
-} from '../../../schemas/orchestration-context.schema';
+} from '@schemas/orchestration-context.schema';
 import { createRetryMachine } from '../state-machines/retry.machine';
 
 /**

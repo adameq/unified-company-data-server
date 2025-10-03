@@ -63,8 +63,6 @@ describe('Integration Tests - Successful Company Lookup', () => {
 
       // Verify response time requirement (should be under 2.5s)
       expect(responseTime).toBeLessThan(2500);
-
-      console.log(`✓ Response time: ${responseTime}ms (target: <2500ms)`);
     });
 
     it('should handle different company types correctly', async () => {
@@ -231,7 +229,7 @@ describe('Integration Tests - Successful Company Lookup', () => {
         // If it's a GUS-only response, KRS field should be undefined or absent
         if (response.body.zrodloDanych === 'GUS') {
           // This is the expected behavior for companies without KRS
-          console.log(`✓ Successfully handled legal entity without KRS - returned GUS-only data`);
+          // Successfully returned GUS-only data for legal entity without KRS number
         }
       }
     });
@@ -252,10 +250,10 @@ describe('Integration Tests - Successful Company Lookup', () => {
         });
 
       if (response.status === 200) {
-        console.log(`✓ Request succeeded (possibly after retries)`);
+        // Request succeeded (possibly after retries)
       } else if (response.status === 502) {
         // 502 is acceptable if external API is truly down after all retries
-        console.log(`ℹ External API unavailable after retries (expected in some cases)`);
+        // External API unavailable after retries (expected in some cases)
       }
     });
 
@@ -280,8 +278,6 @@ describe('Integration Tests - Successful Company Lookup', () => {
       // If there were retries, it would take at least initialDelay * retries (100-200ms+)
       // Without retries, should be under 2 seconds
       expect(responseTime).toBeLessThan(2000);
-
-      console.log(`✓ 404 error handled without retries (${responseTime}ms)`);
     });
   });
 });

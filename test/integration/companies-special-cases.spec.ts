@@ -59,8 +59,6 @@ describe('Integration Tests - Special Business Cases', () => {
       expect(response.body).toHaveProperty('adres');
       expect(response.body.adres).toHaveProperty('miejscowosc');
       expect(response.body.adres).toHaveProperty('kodPocztowy');
-
-      console.log(`✓ CEIDG entrepreneur test passed: ${scenario.description}`);
       },
       10000,
     ); // 10s timeout for external CEIDG API
@@ -90,8 +88,6 @@ describe('Integration Tests - Special Business Cases', () => {
       // Verify status
       expect(response.body.status).toBe(scenario.expectedData.status);
       expect(response.body.isActive).toBe(scenario.expectedData.isActive);
-
-      console.log(`✓ KRS P company test passed: ${scenario.description}`);
       },
       10000,
     ); // 10s timeout for external GUS + KRS API
@@ -117,8 +113,6 @@ describe('Integration Tests - Special Business Cases', () => {
 
       // Verify KRS number exists
       expect(response.body.krs).toMatch(/^\d{10}$/);
-
-      console.log(`✓ KRS P bankruptcy test passed: ${scenario.description}`);
       },
       10000,
     ); // 10s timeout for external API
@@ -147,8 +141,6 @@ describe('Integration Tests - Special Business Cases', () => {
 
         // GUS should return the current active KRS (0001168946), not old one (0000017748)
         expect(response.body.krs).toBe('0001168946');
-
-        console.log(`✓ Transformed company test passed: ${scenario.description}`);
       },
       10000,
     ); // 10s timeout for external API
@@ -178,8 +170,6 @@ describe('Integration Tests - Special Business Cases', () => {
         // Verify status
         expect(response.body.status).toBe(scenario.expectedData.status);
         expect(response.body.isActive).toBe(scenario.expectedData.isActive);
-
-        console.log(`✓ KRS S foundation test passed (with P→S fallback): ${scenario.description}`);
       },
       10000,
     ); // 10s timeout for external API
@@ -205,8 +195,6 @@ describe('Integration Tests - Special Business Cases', () => {
 
         // Verify KRS number exists
         expect(response.body.krs).toMatch(/^\d{10}$/);
-
-        console.log(`✓ KRS S bankruptcy test passed (with P→S fallback): ${scenario.description}`);
       },
       10000,
     ); // 10s timeout for external API
@@ -251,8 +239,6 @@ describe('Integration Tests - Special Business Cases', () => {
           expect(body.isActive).toBe(false);
         }
       });
-
-      console.log(`✓ All ${responses.length} special cases have consistent structure`);
     }, 15000); // Increased timeout for multiple external API calls
 
     it(
@@ -268,8 +254,6 @@ describe('Integration Tests - Special Business Cases', () => {
         expect(bankruptcyResponse.body.status).toBe('UPADŁOŚĆ');
         expect(bankruptcyResponse.body.isActive).toBe(false);
 
-        console.log(`✓ Bankruptcy status correctly detected from dzial6.postepowanieUpadlosciowe`);
-
         // Test liquidation case
         const liquidationResponse = await request(app.getHttpServer())
           .post('/api/companies')
@@ -279,8 +263,6 @@ describe('Integration Tests - Special Business Cases', () => {
 
         expect(liquidationResponse.body.status).toBe('W LIKWIDACJI');
         expect(liquidationResponse.body.isActive).toBe(false);
-
-        console.log(`✓ Liquidation status correctly detected from formaLikwidacji field`);
       },
       10000,
     ); // 10s timeout for external API

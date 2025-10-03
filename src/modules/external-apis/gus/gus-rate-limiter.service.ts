@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Bottleneck from 'bottleneck';
-import type { Environment } from '../../../config/environment.schema';
+import type { Environment } from '@config/environment.schema';
 
 /**
  * GUS API Rate Limiter Service
@@ -72,14 +72,14 @@ export class GusRateLimiterService implements OnModuleDestroy {
     // Log rate limiter events for monitoring
     this.limiter.on('failed', (error, jobInfo) => {
       this.logger.error('Rate limiter job failed', {
-        error: error instanceof Error ? error.message : String(error),
+        error: error && typeof error === 'object' && 'message' in error ? (error as Error).message : String(error),
         retryCount: jobInfo.retryCount,
       });
     });
 
     this.limiter.on('retry', (error, jobInfo) => {
       this.logger.warn('Rate limiter retrying job', {
-        error: error instanceof Error ? error.message : String(error),
+        error: error && typeof error === 'object' && 'message' in error ? (error as Error).message : String(error),
         retryCount: jobInfo.retryCount,
       });
     });

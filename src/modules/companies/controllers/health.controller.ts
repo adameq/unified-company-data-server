@@ -1,7 +1,7 @@
 import { Controller, Get, Logger } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { OrchestrationService } from '../services/orchestration.service';
-import { Public } from '../../common/decorators/public.decorator';
+import { Public } from '@modules/common/decorators/public.decorator';
 
 /**
  * Health Controller - System health check endpoints

@@ -16,7 +16,7 @@ import { OrchestrationService } from '../services/orchestration.service';
 import { CompanyRequestDto } from '../dto/company-request.dto';
 import { UnifiedCompanyDataDto } from '../dto/unified-company-data.dto';
 import { ErrorResponseDto } from '../dto/error-response.dto';
-import { CorrelationId } from '../../common/decorators/correlation-id.decorator';
+import { CorrelationId } from '@modules/common/decorators/correlation-id.decorator';
 
 /**
  * Companies Controller - Main API endpoint for company data retrieval

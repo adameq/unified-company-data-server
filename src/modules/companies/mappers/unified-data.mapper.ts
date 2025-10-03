@@ -1,15 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
-import { UnifiedCompanyDataSchema } from '../../../schemas/unified-company-data.schema';
-import { createErrorResponse } from '../../../schemas/error-response.schema';
-import { BusinessException } from '../../../common/exceptions/business-exceptions';
+import { UnifiedCompanyDataSchema } from '@schemas/unified-company-data.schema';
+import { createErrorResponse } from '@schemas/error-response.schema';
+import { BusinessException } from '@common/exceptions/business-exceptions';
 import type {
   GusClassificationResponse,
   GusLegalPersonReport,
   GusPhysicalPersonReport,
-} from '../../external-apis/gus/gus.service';
-import type { KrsResponse } from '../../external-apis/krs/krs.service';
-import type { CeidgCompany } from '../../external-apis/ceidg/ceidg-v3.service';
+} from '@modules/external-apis/gus/gus.service';
+import type { KrsResponse } from '@modules/external-apis/krs/krs.service';
+import type { CeidgCompany } from '@modules/external-apis/ceidg/ceidg-v3.service';
 
 /**
  * Unified Data Mapper Service
