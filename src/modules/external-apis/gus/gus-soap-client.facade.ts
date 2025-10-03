@@ -122,16 +122,6 @@ export class GusSoapClient {
   }
 
   /**
-   * Get raw strong-soap client for advanced use cases
-   *
-   * @returns Underlying soap.Client instance
-   * @deprecated Use high-level methods (daneSzukajPodmioty, danePobierzPelnyRaport) instead
-   */
-  getRawClient(): soap.Client {
-    return this.client;
-  }
-
-  /**
    * Get last SOAP request XML (for debugging)
    */
   getLastRequest(): string | undefined {
