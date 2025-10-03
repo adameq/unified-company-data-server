@@ -1,6 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { soap } from 'strong-soap';
-import { GusSessionManager } from './gus-session.manager';
 import type { GusConfig, GusSession } from './interfaces/gus-session.interface';
 
 /**
@@ -31,8 +30,9 @@ import type { GusConfig, GusSession } from './interfaces/gus-session.interface';
  *
  * Usage:
  * ```typescript
+ * const sessionManager = new GusSessionManager(config);
+ * const headerManager = new GusHeaderManager(config);
  * const session = await sessionManager.getSession(correlationId);
- * const headerManager = new GusHeaderManager(sessionManager, config);
  *
  * // IMPORTANT: Manually attach headers before each SOAP operation
  * // Pass session explicitly to avoid hidden temporal dependencies
@@ -64,7 +64,6 @@ export class GusHeaderManager {
   };
 
   constructor(
-    private readonly sessionManager: GusSessionManager,
     private readonly config: GusConfig,
   ) {}
 

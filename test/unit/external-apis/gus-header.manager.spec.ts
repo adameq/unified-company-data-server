@@ -1,5 +1,4 @@
 import { GusHeaderManager } from '../../../src/modules/external-apis/gus/gus-header.manager';
-import { GusSessionManager } from '../../../src/modules/external-apis/gus/gus-session.manager';
 import type { GusConfig } from '../../../src/modules/external-apis/gus/interfaces/gus-session.interface';
 
 /**
@@ -16,7 +15,6 @@ import type { GusConfig } from '../../../src/modules/external-apis/gus/interface
 
 describe('GusHeaderManager', () => {
   let headerManager: GusHeaderManager;
-  let sessionManager: GusSessionManager;
   let mockConfig: GusConfig;
 
   beforeEach(() => {
@@ -26,8 +24,7 @@ describe('GusHeaderManager', () => {
       userKey: 'd235b29b4a284c3d89ab',
       sessionTimeoutMs: 30 * 60 * 1000,
     };
-    sessionManager = new GusSessionManager(mockConfig);
-    headerManager = new GusHeaderManager(sessionManager, mockConfig);
+    headerManager = new GusHeaderManager(mockConfig);
   });
 
   describe('Operation Mapping', () => {
@@ -82,8 +79,7 @@ describe('GusHeaderManager', () => {
         sessionTimeoutMs: 30 * 60 * 1000,
       };
 
-      const manager = new GusSessionManager(config);
-      const testHeaderManager = new GusHeaderManager(manager, config);
+      const testHeaderManager = new GusHeaderManager(config);
       expect(testHeaderManager).toBeDefined();
     });
 

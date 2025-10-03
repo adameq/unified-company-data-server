@@ -128,10 +128,7 @@ export class GusService {
 
     // Initialize session manager and header manager
     this.sessionManager = new GusSessionManager(this.config);
-    this.headerManager = new GusHeaderManager(
-      this.sessionManager,
-      this.config,
-    );
+    this.headerManager = new GusHeaderManager(this.config);
   }
 
 
