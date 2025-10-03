@@ -4,6 +4,7 @@ import {
   ExecutionContext,
   Logger,
   Inject,
+  OnModuleInit,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
@@ -25,9 +26,9 @@ import { BusinessException } from '../../../common/exceptions/business-exception
  */
 
 @Injectable()
-export class ApiKeyGuard implements CanActivate {
+export class ApiKeyGuard implements CanActivate, OnModuleInit {
   private readonly logger = new Logger(ApiKeyGuard.name);
-  private validApiKeys: Set<string> | null = null;
+  private validApiKeys!: Set<string>;
 
   constructor(
     @Inject(ConfigService)
@@ -36,16 +37,18 @@ export class ApiKeyGuard implements CanActivate {
   ) {}
 
   /**
-   * Lazy initialization of API keys
-   * Called on first request to ensure ConfigService has loaded environment
+   * Module initialization hook - load API keys once at startup
+   *
+   * Called by NestJS after dependency injection is complete.
+   * ConfigService is fully initialized and environment variables are validated.
+   *
+   * Performance impact:
+   * - Before: Lazy init checked on EVERY request (if statement + potential load)
+   * - After: Eager init executed ONCE at module startup
    */
-  private initializeApiKeys(): void {
-    if (this.validApiKeys !== null) {
-      return; // Already initialized
-    }
-
+  async onModuleInit() {
     // Get API keys from ConfigService - already transformed by Zod schema
-    // ConfigService now returns string[] (parsed and validated by environment.schema.ts)
+    // ConfigService returns string[] (parsed and validated by environment.schema.ts)
     const apiKeys = this.configService.get('VALID_API_KEYS', { infer: true }) || [];
 
     if (apiKeys.length === 0) {
@@ -65,9 +68,6 @@ export class ApiKeyGuard implements CanActivate {
   }
 
   canActivate(context: ExecutionContext): boolean {
-    // Lazy initialization: load API keys on first request
-    this.initializeApiKeys();
-
     // Check if endpoint is marked as public using @Public() decorator
     // Uses Reflector to check metadata at both handler and class level
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
@@ -101,7 +101,7 @@ export class ApiKeyGuard implements CanActivate {
       });
     }
 
-    if (!this.validApiKeys!.has(apiKey)) {
+    if (!this.validApiKeys.has(apiKey)) {
       this.logger.warn('Request with invalid API key', {
         correlationId,
         path: request.path,
