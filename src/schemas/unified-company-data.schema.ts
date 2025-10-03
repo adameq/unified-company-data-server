@@ -9,14 +9,16 @@ import { validateNIP } from '../common/validators/nip.validator';
  */
 
 /**
- * REGON validation removed
+ * REGON checksum validation removed (format validation only)
  *
  * Rationale:
  * - REGON data comes from authoritative government sources (GUS, KRS, CEIDG)
  * - These sources already validate REGON numbers before storing them
  * - Checksum validation adds unnecessary complexity and can reject valid official data
- * - We validate only the format (9 or 14 digits) to catch obvious errors
- * - Trust authoritative sources, validate format only
+ * - Format validation (9 or 14 digits) is sufficient to catch obvious errors
+ * - Trust authoritative sources for checksum correctness
+ *
+ * Current validation: /^\d{9}$|^\d{14}$/ (9 or 14 digits, no checksum)
  */
 
 // PKD activity code schema
