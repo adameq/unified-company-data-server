@@ -28,40 +28,28 @@ const CompanyClassificationSchema = z
 
     typ: z.string().describe('Entity type from GUS'),
 
-    // Derived routing flags for convenience
+    // Derived routing flags for convenience (auto-calculated from silosId)
     requiresKrs: z
       .boolean()
-      .default(false)
+      .optional()
       .describe('True if silosId = 6 (legal entities)'),
 
     requiresCeidg: z
       .boolean()
-      .default(false)
+      .optional()
       .describe('True if silosId = 1 (individual entrepreneurs)'),
 
     isDeregistered: z
       .boolean()
-      .default(false)
+      .optional()
       .describe('True if silosId = 4 (deregistered entities)'),
   })
-  .refine(
-    (data) => {
-      // Auto-calculate routing flags based on silosId
-      const expectedKrs = data.silosId === '6';
-      const expectedCeidg = data.silosId === '1';
-      const expectedDeregistered = data.silosId === '4';
-
-      return (
-        data.requiresKrs === expectedKrs &&
-        data.requiresCeidg === expectedCeidg &&
-        data.isDeregistered === expectedDeregistered
-      );
-    },
-    {
-      message: 'Routing flags must match silosId values',
-      path: ['silosId'],
-    },
-  );
+  .transform((data) => ({
+    ...data,
+    requiresKrs: data.silosId === '6',
+    requiresCeidg: data.silosId === '1',
+    isDeregistered: data.silosId === '4',
+  }));
 
 // Last error sub-schema
 const LastErrorSchema = z.object({
@@ -209,13 +197,11 @@ export function createCompanyClassification(
   regon: string,
   typ: string,
 ): CompanyClassification {
+  // Schema automatically calculates routing flags via .transform()
   return CompanyClassificationSchema.parse({
     silosId,
     regon,
     typ,
-    requiresKrs: silosId === '6',
-    requiresCeidg: silosId === '1',
-    isDeregistered: silosId === '4',
   });
 }
 
