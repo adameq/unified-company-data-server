@@ -50,7 +50,7 @@ export const defaultGusConfig: GusConfig = createGusConfig({
   GUS_WSDL_URL:
     'https://wyszukiwarkaregon.stat.gov.pl/wsBIR/wsdl/UslugaBIRzewnPubl-ver11-prod.wsdl',
   GUS_USER_KEY: 'test-gus-key',
-  EXTERNAL_API_TIMEOUT: 5000,
+  APP_EXTERNAL_API_TIMEOUT: 5000,
   GUS_MAX_RETRIES: 2,
   GUS_INITIAL_DELAY: 100,
 } as Environment);

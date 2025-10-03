@@ -156,7 +156,7 @@ export class KrsService {
   ) {
     this.config = {
       baseUrl: this.configService.get('KRS_BASE_URL', { infer: true }),
-      timeout: this.configService.get('EXTERNAL_API_TIMEOUT', { infer: true }),
+      timeout: this.configService.get('APP_EXTERNAL_API_TIMEOUT', { infer: true }),
       retryConfig: {
         maxRetries: this.configService.get('KRS_MAX_RETRIES', { infer: true }),
         initialDelay: this.configService.get('KRS_INITIAL_DELAY', { infer: true }),

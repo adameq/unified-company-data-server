@@ -149,7 +149,7 @@ export class CeidgV3Service {
     this.config = {
       baseUrl: this.configService.get('CEIDG_BASE_URL', { infer: true }),
       jwtToken: this.configService.get('CEIDG_JWT_TOKEN', { infer: true }),
-      timeout: this.configService.get('EXTERNAL_API_TIMEOUT', { infer: true }),
+      timeout: this.configService.get('APP_EXTERNAL_API_TIMEOUT', { infer: true }),
       retryConfig: {
         maxRetries: this.configService.get('CEIDG_MAX_RETRIES', { infer: true }),
         initialDelay: this.configService.get('CEIDG_INITIAL_DELAY', { infer: true }),

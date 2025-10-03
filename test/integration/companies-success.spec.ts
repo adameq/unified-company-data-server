@@ -18,8 +18,8 @@ describe('Integration Tests - Successful Company Lookup', () => {
   let validApiKey: string;
 
   beforeAll(async () => {
-    // Use known API key from .env
-    validApiKey = 'test-api-key-for-development-at-least-32-characters-long';
+    // Use default API key from environment.schema.ts
+    validApiKey = 'dev_api_key_1234567890abcdef1234567890abcdef';
 
     // Create test app using helper (no ValidationPipe needed for success scenarios)
     const { app: testApp } = await createTestApp();

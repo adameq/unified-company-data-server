@@ -128,7 +128,7 @@ describe('EnvironmentSchema', () => {
         NODE_ENV: 'production',
         GUS_USER_KEY: 'prod_key_12345678901234567890',
         CEIDG_JWT_TOKEN: 'prod_jwt_1234567890123456789012345678901234567890123456',
-        VALID_API_KEYS: 'key1_1234567890abcdef1234567890abcdef,key2_abcdefghijklmnopqrstuvwxyz123456,key3_zyxwvutsrqponmlkjihgfedcba987654',
+        APP_API_KEYS: 'key1_1234567890abcdef1234567890abcdef,key2_abcdefghijklmnopqrstuvwxyz123456,key3_zyxwvutsrqponmlkjihgfedcba987654',
         APP_CORS_ALLOWED_ORIGINS: 'https://app.example.com',
         GUS_BASE_URL: 'https://production.gus.gov.pl',
         GUS_WSDL_URL: 'https://production.gus.gov.pl/wsdl',
@@ -248,18 +248,16 @@ describe('EnvironmentSchema', () => {
       expect(() => EnvironmentSchema.parse(config)).toThrow();
     });
 
-    it('should throw error when APP_API_KEYS (or VALID_API_KEYS) is missing', () => {
+    it('should use default APP_API_KEYS when not provided', () => {
       const config = {
         NODE_ENV: 'development',
         GUS_USER_KEY: 'test_key_12345678901234567890',
         CEIDG_JWT_TOKEN: 'test_jwt_1234567890123456789012345678901234567890123456',
-        // Missing: Both APP_API_KEYS and VALID_API_KEYS
+        // Missing: APP_API_KEYS - should use default value
       };
 
-      // Should NOT throw - backwards compatibility means both are optional
-      // But transform will create empty array [] from undefined
       const result = EnvironmentSchema.parse(config);
-      expect(result.APP_API_KEYS).toEqual([]);
+      expect(result.APP_API_KEYS).toEqual(['dev_api_key_1234567890abcdef1234567890abcdef']);
     });
 
     it('should throw error when API key is shorter than 32 characters', () => {
@@ -267,7 +265,7 @@ describe('EnvironmentSchema', () => {
         NODE_ENV: 'development',
         GUS_USER_KEY: 'test_key_12345678901234567890',
         CEIDG_JWT_TOKEN: 'test_jwt_1234567890123456789012345678901234567890123456',
-        VALID_API_KEYS: 'short_key', // ❌ Less than 32 chars
+        APP_API_KEYS: 'short_key', // ❌ Less than 32 chars
       };
 
       expect(() => EnvironmentSchema.parse(config)).toThrow(
@@ -280,7 +278,7 @@ describe('EnvironmentSchema', () => {
         NODE_ENV: 'development',
         GUS_USER_KEY: 'test_key_12345678901234567890',
         CEIDG_JWT_TOKEN: 'test_jwt_1234567890123456789012345678901234567890123456',
-        VALID_API_KEYS: 'valid_key_1234567890abcdef1234567890abcdef,short', // Second key too short
+        APP_API_KEYS: 'valid_key_1234567890abcdef1234567890abcdef,short', // Second key too short
       };
 
       expect(() => EnvironmentSchema.parse(config)).toThrow(

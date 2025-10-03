@@ -53,7 +53,7 @@ export const createCeidgConfig = (env: Environment): CeidgConfig => ({
 export const defaultCeidgConfig: CeidgConfig = createCeidgConfig({
   CEIDG_BASE_URL: 'https://dane.biznes.gov.pl/api/ceidg/v3',
   CEIDG_JWT_TOKEN: 'test-ceidg-token',
-  EXTERNAL_API_TIMEOUT: 5000,
+  APP_EXTERNAL_API_TIMEOUT: 5000,
   CEIDG_MAX_RETRIES: 2,
   CEIDG_INITIAL_DELAY: 150,
 } as Environment);

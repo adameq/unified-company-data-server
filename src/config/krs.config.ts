@@ -42,7 +42,7 @@ export const createKrsConfig = (env: Environment): KrsConfig => ({
  */
 export const defaultKrsConfig: KrsConfig = createKrsConfig({
   KRS_BASE_URL: 'https://api-krs.ms.gov.pl',
-  EXTERNAL_API_TIMEOUT: 5000,
+  APP_EXTERNAL_API_TIMEOUT: 5000,
   KRS_MAX_RETRIES: 2,
   KRS_INITIAL_DELAY: 200,
 } as Environment);

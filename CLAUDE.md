@@ -169,12 +169,10 @@ Retrieve unified company data by NIP number.
 
 ### Naming Convention
 
-**NEW (2025-10)**: Application-level configuration uses `APP_*` prefix to distinguish from service-specific variables:
+Application-level configuration uses `APP_*` prefix to distinguish from service-specific variables:
 
 - **Application-level** (server, auth, CORS, logging): `APP_*` prefix
 - **Service integrations** (GUS, KRS, CEIDG): Service-specific prefix (`GUS_*`, `KRS_*`, `CEIDG_*`)
-
-**Backward Compatibility**: Old names without `APP_` prefix are still supported for 2-3 versions but deprecated.
 
 ### Required Environment Variables
 
@@ -189,17 +187,16 @@ CEIDG_JWT_TOKEN=your_jwt_token_here  # CEIDG v3 API JWT (50 chars minimum)
 
 # API Authentication (for production)
 APP_API_KEYS=key1,key2,key3         # Comma-separated API keys (32 chars each)
-                                    # OLD: VALID_API_KEYS (deprecated, still works)
 
 # Application-level Performance & Timeouts
-APP_REQUEST_TIMEOUT=15000           # Request timeout in ms (OLD: REQUEST_TIMEOUT)
-APP_EXTERNAL_API_TIMEOUT=5000       # External API timeout in ms (OLD: EXTERNAL_API_TIMEOUT)
-APP_RATE_LIMIT_PER_MINUTE=100       # Rate limit per minute (OLD: RATE_LIMIT_PER_MINUTE)
+APP_REQUEST_TIMEOUT=15000           # Request timeout in ms
+APP_EXTERNAL_API_TIMEOUT=5000       # External API timeout in ms
+APP_RATE_LIMIT_PER_MINUTE=100       # Rate limit per minute
 
 # Application-level Orchestration
-APP_ORCHESTRATION_TIMEOUT=30000     # Orchestration timeout in ms (OLD: ORCHESTRATION_TIMEOUT)
+APP_ORCHESTRATION_TIMEOUT=30000     # Orchestration timeout in ms
 
-# Service-specific Retry Configuration (no change)
+# Service-specific Retry Configuration
 GUS_MAX_RETRIES=2                   # Max retries for GUS
 GUS_INITIAL_DELAY=100               # Initial delay for GUS retries
 KRS_MAX_RETRIES=2                   # Max retries for KRS
@@ -207,27 +204,27 @@ KRS_INITIAL_DELAY=200               # Initial delay for KRS retries
 CEIDG_MAX_RETRIES=2                 # Max retries for CEIDG
 CEIDG_INITIAL_DELAY=150             # Initial delay for CEIDG retries
 
-# Service-specific Rate Limiting (no change)
+# Service-specific Rate Limiting
 GUS_MAX_REQUESTS_PER_SECOND=10      # Max requests/second for GUS API (token bucket)
 
 # Application-level Logging
-APP_LOG_LEVEL=debug                 # Log level: error, warn, info, debug (OLD: LOG_LEVEL)
-APP_LOG_FORMAT=pretty               # Format: json, pretty (OLD: LOG_FORMAT)
+APP_LOG_LEVEL=debug                 # Log level: error, warn, info, debug
+APP_LOG_FORMAT=pretty               # Format: json, pretty
 
 # Application-level CORS Configuration
-APP_CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173  # OLD: CORS_ALLOWED_ORIGINS
+APP_CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
 
 # Application-level Security Headers
-APP_ENABLE_HELMET=true              # Enable Helmet security headers (OLD: ENABLE_HELMET)
+APP_ENABLE_HELMET=true              # Enable Helmet security headers
 
 # Application-level Health Checks
-APP_HEALTH_CHECK_ENABLED=true       # Enable health checks (OLD: ENABLE_HEALTH_CHECKS)
-APP_HEALTH_CHECK_TIMEOUT=3000       # Health check timeout in ms (OLD: HEALTH_CHECK_TIMEOUT)
+APP_HEALTH_CHECK_ENABLED=true       # Enable health checks
+APP_HEALTH_CHECK_TIMEOUT=3000       # Health check timeout in ms
 
 # Application-level Swagger
-APP_SWAGGER_ENABLED=true            # Enable Swagger docs (OLD: SWAGGER_ENABLED)
-APP_SWAGGER_SERVER_URL_DEVELOPMENT=http://localhost:3000  # OLD: SWAGGER_SERVER_URL_DEVELOPMENT
-APP_SWAGGER_SERVER_URL_PRODUCTION=https://api.example.com  # OLD: SWAGGER_SERVER_URL_PRODUCTION
+APP_SWAGGER_ENABLED=true            # Enable Swagger docs
+APP_SWAGGER_SERVER_URL_DEVELOPMENT=http://localhost:3000
+APP_SWAGGER_SERVER_URL_PRODUCTION=https://api.example.com
 ```
 
 ### CORS Security Configuration
