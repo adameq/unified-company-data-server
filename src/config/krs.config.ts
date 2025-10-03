@@ -6,8 +6,9 @@ import { type Environment } from './environment.schema';
  * Configuration for Polish National Court Register (KRS) REST API integration.
  * Includes registry fallback mechanisms and retry policies.
  *
- * Note: Retry logic (canRetry decisions) is implemented in retry.machine.ts
- * via canBeRetriedByService() function. This config contains only data.
+ * Note: Retry logic (canRetry decisions) is implemented via RetryStrategy pattern.
+ * Each service has its own strategy class (e.g., KrsRetryStrategy).
+ * This config contains only data (maxRetries, initialDelay).
  */
 
 export interface KrsConfig {

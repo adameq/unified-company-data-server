@@ -6,8 +6,9 @@ import { type Environment } from './environment.schema';
  * Configuration for Polish Statistical Office (GUS) SOAP API integration.
  * Includes session management, retry policies, and authentication settings.
  *
- * Note: Retry logic (canRetry decisions) is implemented in retry.machine.ts
- * via canBeRetriedByService() function. This config contains only data.
+ * Note: Retry logic (canRetry decisions) is implemented via RetryStrategy pattern.
+ * Each service has its own strategy class (e.g., GusRetryStrategy).
+ * This config contains only data (maxRetries, initialDelay).
  */
 
 export interface GusConfig {

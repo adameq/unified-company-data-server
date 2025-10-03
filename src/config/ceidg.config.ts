@@ -6,8 +6,9 @@ import { type Environment } from './environment.schema';
  * Configuration for Polish CEIDG (Central Registration and Information on Business)
  * v3 REST API integration. Includes JWT authentication, rate limiting, and retry policies.
  *
- * Note: Retry logic (canRetry decisions) is implemented in retry.machine.ts
- * via canBeRetriedByService() function. This config contains only data.
+ * Note: Retry logic (canRetry decisions) is implemented via RetryStrategy pattern.
+ * Each service has its own strategy class (e.g., CeidgRetryStrategy).
+ * This config contains only data (maxRetries, initialDelay).
  */
 
 export interface CeidgConfig {

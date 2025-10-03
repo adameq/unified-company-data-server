@@ -18,6 +18,9 @@ import {
   type OrchestrationMachineConfig,
 } from '../providers/orchestration-machine.provider';
 import { createRetryMachine } from '../state-machines/retry.machine';
+import { GusRetryStrategy } from '../state-machines/strategies/gus-retry.strategy';
+import { KrsRetryStrategy } from '../state-machines/strategies/krs-retry.strategy';
+import { CeidgRetryStrategy } from '../state-machines/strategies/ceidg-retry.strategy';
 
 /**
  * Orchestration Service - Bridge between Controllers and State Machines
@@ -45,6 +48,11 @@ export class OrchestrationService implements OnModuleInit {
   private configuredMachine: any;
   private machineConfig!: OrchestrationMachineConfig;
 
+  // Retry strategies (reusable, stateless singletons)
+  private readonly gusRetryStrategy = new GusRetryStrategy();
+  private readonly krsRetryStrategy = new KrsRetryStrategy();
+  private readonly ceidgRetryStrategy = new CeidgRetryStrategy();
+
   constructor(
     @Inject(ORCHESTRATION_MACHINE) private readonly baseMachine: any,
     private readonly gusService: GusService,
@@ -54,8 +62,13 @@ export class OrchestrationService implements OnModuleInit {
     private readonly configService: ConfigService<Environment, true>,
   ) {
     this.logger.log('OrchestrationService initialized', {
-      architecture: 'XState v5 with DI',
+      architecture: 'XState v5 with DI + Strategy Pattern',
       healthCheckStrategy: 'live (no caching)',
+      retryStrategies: [
+        this.gusRetryStrategy.name,
+        this.krsRetryStrategy.name,
+        this.ceidgRetryStrategy.name,
+      ],
     });
   }
 
@@ -130,7 +143,7 @@ export class OrchestrationService implements OnModuleInit {
           const { nip, correlationId } = input;
 
           const retryMachine = createRetryMachine(
-            'GUS',
+            this.gusRetryStrategy.name,  // Use strategy name
             correlationId,
             this.logger,
             this.machineConfig.retry.gus, // Use pre-built config
@@ -146,26 +159,26 @@ export class OrchestrationService implements OnModuleInit {
             },
           });
 
-          const actor = createActor(retryMachine, { input: { nip, correlationId } });
-
-          return new Promise((resolve, reject) => {
-            actor.subscribe({
-              complete: () => {
-                const snapshot = actor.getSnapshot();
-                if (snapshot.value === 'success') {
-                  resolve(snapshot.output ?? snapshot.context?.result);
-                } else {
-                  reject(
-                    snapshot.output ||
-                      snapshot.context?.lastError ||
-                      new Error('GUS retry failed'),
-                  );
-                }
-              },
-              error: (err) => reject(err),
-            });
-            actor.start();
+          const actor = createActor(retryMachine, {
+            input: {
+              nip,
+              correlationId,
+              retryStrategy: this.gusRetryStrategy,  // Inject strategy
+            }
           });
+          actor.start();
+
+          // Use toPromise() helper (idiomatic XState v5 pattern)
+          await toPromise(actor);
+
+          const snapshot = actor.getSnapshot();
+          if (snapshot.value !== 'success') {
+            throw snapshot.output ||
+              snapshot.context?.lastError ||
+              new Error('GUS retry failed');
+          }
+
+          return snapshot.output ?? snapshot.context?.result;
         }),
 
         // GUS Detailed Data with retry logic via state machine
@@ -173,7 +186,7 @@ export class OrchestrationService implements OnModuleInit {
           const { regon, silosId, correlationId } = input;
 
           const retryMachine = createRetryMachine(
-            'GUS',
+            this.gusRetryStrategy.name,  // Use strategy name
             correlationId,
             this.logger,
             this.machineConfig.retry.gus,
@@ -191,26 +204,27 @@ export class OrchestrationService implements OnModuleInit {
             },
           });
 
-          const actor = createActor(retryMachine, { input: { regon, silosId, correlationId } });
-
-          return new Promise((resolve, reject) => {
-            actor.subscribe({
-              complete: () => {
-                const snapshot = actor.getSnapshot();
-                if (snapshot.value === 'success') {
-                  resolve(snapshot.output ?? snapshot.context?.result);
-                } else {
-                  reject(
-                    snapshot.output ||
-                      snapshot.context?.lastError ||
-                      new Error('GUS detailed data retry failed'),
-                  );
-                }
-              },
-              error: (err) => reject(err),
-            });
-            actor.start();
+          const actor = createActor(retryMachine, {
+            input: {
+              regon,
+              silosId,
+              correlationId,
+              retryStrategy: this.gusRetryStrategy,  // Inject strategy
+            }
           });
+          actor.start();
+
+          // Use toPromise() helper (idiomatic XState v5 pattern)
+          await toPromise(actor);
+
+          const snapshot = actor.getSnapshot();
+          if (snapshot.value !== 'success') {
+            throw snapshot.output ||
+              snapshot.context?.lastError ||
+              new Error('GUS detailed data retry failed');
+          }
+
+          return snapshot.output ?? snapshot.context?.result;
         }),
 
         // KRS Data with retry logic via state machine
@@ -218,7 +232,7 @@ export class OrchestrationService implements OnModuleInit {
           const { krsNumber, registry, correlationId } = input;
 
           const retryMachine = createRetryMachine(
-            'KRS',
+            this.krsRetryStrategy.name,  // Use strategy name
             correlationId,
             this.logger,
             this.machineConfig.retry.krs,
@@ -236,8 +250,16 @@ export class OrchestrationService implements OnModuleInit {
             },
           });
 
-          const actor = createActor(retryMachine, { input: { krsNumber, registry, correlationId } });
+          const actor = createActor(retryMachine, {
+            input: {
+              krsNumber,
+              registry,
+              correlationId,
+              retryStrategy: this.krsRetryStrategy,  // Inject strategy
+            }
+          });
 
+          // Use Promise-based pattern for proper error propagation to orchestration onError guards
           return new Promise((resolve, reject) => {
             actor.subscribe({
               complete: () => {
@@ -245,6 +267,7 @@ export class OrchestrationService implements OnModuleInit {
                 if (snapshot.value === 'success') {
                   resolve(snapshot.output ?? snapshot.context?.result);
                 } else {
+                  // Reject with error object so orchestration guards can evaluate it
                   reject(
                     snapshot.output ||
                       snapshot.context?.lastError ||
@@ -263,7 +286,7 @@ export class OrchestrationService implements OnModuleInit {
           const { nip, correlationId } = input;
 
           const retryMachine = createRetryMachine(
-            'CEIDG',
+            this.ceidgRetryStrategy.name,
             correlationId,
             this.logger,
             this.machineConfig.retry.ceidg,
@@ -280,26 +303,26 @@ export class OrchestrationService implements OnModuleInit {
             },
           });
 
-          const actor = createActor(retryMachine, { input: { nip, correlationId } });
-
-          return new Promise((resolve, reject) => {
-            actor.subscribe({
-              complete: () => {
-                const snapshot = actor.getSnapshot();
-                if (snapshot.value === 'success') {
-                  resolve(snapshot.output ?? snapshot.context?.result);
-                } else {
-                  reject(
-                    snapshot.output ||
-                      snapshot.context?.lastError ||
-                      new Error('CEIDG retry failed'),
-                  );
-                }
-              },
-              error: (err) => reject(err),
-            });
-            actor.start();
+          const actor = createActor(retryMachine, {
+            input: {
+              nip,
+              correlationId,
+              retryStrategy: this.ceidgRetryStrategy,
+            }
           });
+          actor.start();
+
+          // Use toPromise() helper (idiomatic XState v5 pattern)
+          await toPromise(actor);
+
+          const snapshot = actor.getSnapshot();
+          if (snapshot.value !== 'success') {
+            throw snapshot.output ||
+              snapshot.context?.lastError ||
+              new Error('CEIDG retry failed');
+          }
+
+          return snapshot.output ?? snapshot.context?.result;
         }),
 
         // Inactive company mapping (no retry needed)
@@ -419,19 +442,23 @@ export class OrchestrationService implements OnModuleInit {
 
   /**
    * Wait for state machine completion using XState v5 toPromise() helper
-   * Eliminates Promise constructor anti-pattern with idiomatic XState code
-   * Timeout is handled by the state machine itself via 'after' transitions
+   *
+   * XState v5 idiom: toPromise() waits for actor to reach final state, then we access snapshot.output.
+   * The machine defines output for all final states (success, failure states).
+   * Success state outputs UnifiedCompanyData, failure states output ErrorResponse.
+   *
+   * @param actor - XState actor to wait for
+   * @param correlationId - Request correlation ID for logging
+   * @returns UnifiedCompanyData on success
+   * @throws BusinessException with ErrorResponse on failure states
    */
   private async waitForCompletion(
     actor: AnyActorRef,
     correlationId: string,
   ): Promise<UnifiedCompanyData> {
     try {
-      // XState v5: Use toPromise() to convert actor to promise
-      // Note: toPromise() resolves with snapshot.output for success states
-      // For final states that are not success, it still resolves (not rejects)
-      // because the actor reaches 'done' status
-      const output = await toPromise(actor);
+      // XState v5: toPromise() waits for final state, output is in snapshot.output
+      await toPromise(actor);
 
       const snapshot = actor.getSnapshot();
       this.logger.debug('State machine completed', {
@@ -440,52 +467,23 @@ export class OrchestrationService implements OnModuleInit {
         status: snapshot.status,
       });
 
-      // Check if we reached a success state
-      if (snapshot.value !== 'success') {
-        // Actor completed but not in success state (e.g., timeoutFailure, entityNotFoundFailure)
-        // Extract error from output or context
-        const errorOutput = snapshot.output || snapshot.context?.lastError;
+      // Get output from snapshot (defined by machine's output: ({ context }) => ...)
+      // For success state: Use output or finalCompanyData (skip lastError)
+      // For failure states: Use output or lastError
+      const output = snapshot.output ??
+                     (snapshot.value === 'success'
+                       ? snapshot.context?.finalCompanyData
+                       : snapshot.context?.lastError);
 
-        if (errorOutput && errorOutput.errorCode) {
-          throw new BusinessException(errorOutput);
-        }
-
-        // Fallback for unexpected final states
-        throw new BusinessException(
-          createErrorResponse({
-            errorCode: 'ORCHESTRATION_FAILED',
-            message: 'Orchestration failed with unknown error',
-            correlationId,
-            source: 'INTERNAL',
-            details: { finalState: snapshot.value },
-          }),
-        );
+      // Check if output is an error (failure states: entityNotFoundFailure, mappingFailure, etc.)
+      // ErrorResponse has 'errorCode' field, UnifiedCompanyData has 'nip' field
+      if (this.isErrorResponse(output)) {
+        throw new BusinessException(output);
       }
 
-      // Success state - get data from context.finalCompanyData (XState v5 output evaluation issue)
-      const finalData = snapshot.context?.finalCompanyData;
-
-      if (!finalData) {
-        this.logger.error('No data in success state', {
-          correlationId,
-          hasOutput: !!output,
-          hasContextFinal: !!snapshot.context?.finalCompanyData,
-          snapshotValue: snapshot.value,
-        });
-
-        throw new BusinessException(
-          createErrorResponse({
-            errorCode: 'DATA_MAPPING_FAILED',
-            message: 'No data in success state output',
-            correlationId,
-            source: 'INTERNAL',
-          }),
-        );
-      }
-
-      // Validate output with Zod schema
+      // Success state - validate and return UnifiedCompanyData
       try {
-        return UnifiedCompanyDataSchema.parse(finalData);
+        return UnifiedCompanyDataSchema.parse(output);
       } catch (validationError) {
         this.logger.error('Output validation failed', {
           correlationId,
@@ -511,12 +509,12 @@ export class OrchestrationService implements OnModuleInit {
         );
       }
     } catch (error) {
-      // Handle errors from validation or BusinessException throws above
+      // Re-throw BusinessException (from error states or validation failure)
       if (error instanceof BusinessException) {
         throw error;
       }
 
-      // Handle unexpected toPromise() rejections (should not happen in normal flow)
+      // Handle unexpected errors (should not happen in normal flow)
       const snapshot = actor.getSnapshot();
 
       this.logger.error('Unexpected error in waitForCompletion', {
@@ -529,7 +527,7 @@ export class OrchestrationService implements OnModuleInit {
       throw new BusinessException(
         createErrorResponse({
           errorCode: 'ORCHESTRATION_FAILED',
-          message: error instanceof Error ? error.message : 'Orchestration failed with unknown error',
+          message: error instanceof Error ? error.message : 'Orchestration failed',
           correlationId,
           source: 'INTERNAL',
           details: { finalState: snapshot.value },
