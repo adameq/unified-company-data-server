@@ -12,6 +12,7 @@ import { type Environment } from '../../../config/environment.schema';
 import { BusinessException } from '../../../common/exceptions/business-exceptions';
 import { GusSessionManager } from './gus-session.manager';
 import { GusRequestInterceptor } from './gus-request.interceptor';
+import { GusRateLimiterService } from './gus-rate-limiter.service';
 import { GusSession, GusConfig } from './interfaces/gus-session.interface';
 import {
   createSoapClient,
@@ -113,7 +114,10 @@ export class GusService {
   private readonly sessionManager: GusSessionManager;
   private readonly requestInterceptor: GusRequestInterceptor;
 
-  constructor(private readonly configService: ConfigService<Environment, true>) {
+  constructor(
+    private readonly configService: ConfigService<Environment, true>,
+    private readonly rateLimiter: GusRateLimiterService,
+  ) {
     this.config = {
       baseUrl: this.configService.get('GUS_BASE_URL', { infer: true }),
       wsdlUrl: this.configService.get('GUS_WSDL_URL', { infer: true }),
@@ -151,8 +155,9 @@ export class GusService {
       // Normalize NIP (remove spaces)
       const cleanNip = nip.replace(/\s+/g, '').trim();
 
-      // Add small delay to avoid GUS rate limiting (required by GUS server)
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Rate limiting: Ensure we don't exceed GUS API rate limits
+      // Uses Bottleneck token bucket algorithm to queue concurrent requests
+      await this.rateLimiter.schedule(() => Promise.resolve());
 
       // Call DaneSzukajPodmioty operation using strong-soap
       // Headers (sid, WS-Addressing) are added automatically by GusRequestInterceptor
@@ -337,8 +342,9 @@ export class GusService {
 
       const reportName = this.getReportNameBySilosId(silosId, correlationId);
 
-      // Add small delay to avoid GUS rate limiting (required by GUS server)
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Rate limiting: Ensure we don't exceed GUS API rate limits
+      // Uses Bottleneck token bucket algorithm to queue concurrent requests
+      await this.rateLimiter.schedule(() => Promise.resolve());
 
       // Call DanePobierzPelnyRaport operation using strong-soap
       // Headers (sid, WS-Addressing) are added automatically by GusRequestInterceptor

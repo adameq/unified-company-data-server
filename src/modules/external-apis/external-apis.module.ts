@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { GusService } from './gus/gus.service';
+import { GusRateLimiterService } from './gus/gus-rate-limiter.service';
 import { KrsService } from './krs/krs.service';
 import { CeidgV3Service } from './ceidg/ceidg-v3.service';
 
@@ -22,8 +24,8 @@ import { CeidgV3Service } from './ceidg/ceidg-v3.service';
  */
 
 @Module({
-  imports: [],
-  providers: [GusService, KrsService, CeidgV3Service],
+  imports: [ConfigModule],
+  providers: [GusService, GusRateLimiterService, KrsService, CeidgV3Service],
   exports: [GusService, KrsService, CeidgV3Service],
 })
 export class ExternalApisModule {}

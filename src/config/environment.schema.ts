@@ -72,6 +72,17 @@ export const EnvironmentSchema = z
   CEIDG_MAX_RETRIES: z.coerce.number().int().min(0).max(5).default(2),
   CEIDG_INITIAL_DELAY: z.coerce.number().int().min(50).max(2000).default(150),
 
+  // GUS Rate Limiting
+  GUS_MAX_REQUESTS_PER_SECOND: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .default(10)
+    .describe(
+      'Maximum requests per second for GUS API (token bucket rate limiter)',
+    ),
+
   // Health Check Configuration
   HEALTH_CHECK_ENABLED: z.coerce.boolean().default(true),
   HEALTH_CHECK_TIMEOUT: z.coerce

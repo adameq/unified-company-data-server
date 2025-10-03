@@ -194,6 +194,9 @@ KRS_INITIAL_DELAY=200               # Initial delay for KRS retries
 CEIDG_MAX_RETRIES=2                 # Max retries for CEIDG
 CEIDG_INITIAL_DELAY=150             # Initial delay for CEIDG retries
 
+# GUS Rate Limiting
+GUS_MAX_REQUESTS_PER_SECOND=10      # Max requests/second for GUS API (token bucket)
+
 # CORS Configuration
 CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173  # Comma-separated origins
 ```
@@ -357,7 +360,7 @@ The service uses **real Polish government APIs** for data retrieval:
   - **SOAP 1.2** protocol with MTOM responses
   - **WS-Addressing headers** required: `<wsa:To>` and `<wsa:Action>`
   - **Session management**: 60-minute sessions with `sid` HTTP header
-  - **Rate limiting protection**: 100ms delay between operations
+  - **Rate limiting**: Bottleneck library with token bucket algorithm (10 req/s default)
   - **Namespace handling**: `xmlns:dat="http://CIS/BIR/PUBL/2014/07/DataContract"` at Envelope level
 - **KRS (National Court Register)**: Legal entities data via REST API
 - **CEIDG (Central Registration of Business Activity)**: Individual entrepreneurs via REST API
@@ -370,7 +373,13 @@ The GUS service (`gus.service.ts`) uses **strong-soap v5.0.2** with custom reque
 
 1. **WS-Addressing Headers**: Custom interceptor injects required SOAP headers without `soap:mustUnderstand` attributes
 2. **DataContract Namespace**: Added at Envelope level (`xmlns:dat`) to avoid inline namespace declarations
-3. **Rate Limiting**: 100ms delay before `DaneSzukajPodmioty` and `DanePobierzPelnyRaport` operations
+3. **Rate Limiting**: Global rate limiter using **Bottleneck** library with token bucket algorithm
+   - **Implementation**: `GusRateLimiterService` (injectable NestJS service)
+   - **Algorithm**: Token bucket with reservoir refilling every second
+   - **Configuration**: `GUS_MAX_REQUESTS_PER_SECOND` environment variable (default: 10 req/s)
+   - **Concurrency**: Queues all concurrent requests, executes serially with rate control
+   - **Applied to**: `DaneSzukajPodmioty` and `DanePobierzPelnyRaport` operations
+   - **Benefits**: Prevents overwhelming GUS API with concurrent bursts, thread-safe
 4. **Session Management**: HTTP header `sid` (not SOAP header) with automatic re-addition before each operation
 5. **MTOM Response Handling**: strong-soap automatically parses MTOM (`application/xop+xml`) responses
 
