@@ -298,31 +298,28 @@ export class KrsService {
   }
 
   /**
-   * Fetch company data by KRS number (convenience method)
-   *
-   * @deprecated Use fetchFromRegistry() instead for better control.
-   *             This method tries P registry only for backward compatibility.
-   */
-  async fetchCompanyByKrs(
-    krsNumber: string,
-    correlationId: string,
-  ): Promise<KrsResponse> {
-    return this.fetchFromRegistry(krsNumber, 'P', correlationId);
-  }
-
-  /**
    * Check if entity exists in KRS (lightweight check)
+   * Tries P registry first, then S registry if not found
    */
   async checkEntityExists(
     krsNumber: string,
     correlationId: string,
   ): Promise<boolean> {
     try {
-      await this.fetchCompanyByKrs(krsNumber, correlationId);
+      await this.fetchFromRegistry(krsNumber, 'P', correlationId);
       return true;
     } catch (error: any) {
       if (error.errorCode === 'ENTITY_NOT_FOUND') {
-        return false;
+        // Try S registry before returning false
+        try {
+          await this.fetchFromRegistry(krsNumber, 'S', correlationId);
+          return true;
+        } catch (sError: any) {
+          if (sError.errorCode === 'ENTITY_NOT_FOUND') {
+            return false;
+          }
+          throw sError;
+        }
       }
       // Re-throw other errors (service unavailable, timeout, etc.)
       throw error;

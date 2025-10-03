@@ -319,9 +319,9 @@ The application uses a **centralized retry strategy** via XState machines:
 
 **Service Layer** - No retry logic, just throw errors:
 ```typescript
-async fetchCompanyByKrs(krs: string, correlationId: string) {
+async fetchFromRegistry(krs: string, registry: 'P' | 'S', correlationId: string) {
   // No retry logic here - just fetch and throw on error
-  const response = await this.httpClient.get(`/api/krs/${krs}`);
+  const response = await this.httpClient.get(`/api/krs/${krs}?registry=${registry}`);
   return response.data;
 }
 ```
@@ -337,7 +337,7 @@ invoke: {
     const retryMachine = createRetryMachine('KRS', correlationId, logger);
     const retryActor = createActor(retryMachine, {
       input: {
-        serviceCall: () => services.krsService.fetchCompanyByKrs(krsNumber, correlationId),
+        serviceCall: () => services.krsService.fetchFromRegistry(krsNumber, registry, correlationId),
         correlationId,
       },
     });
@@ -469,7 +469,7 @@ The XState orchestration machine is **fully active** in `orchestration.service.t
 ```typescript
 const services: OrchestrationServices = {
   gusService: { getClassificationByNip, getDetailedReport },
-  krsService: { fetchCompanyByKrs },
+  krsService: { fetchFromRegistry },
   ceidgService: { getCompanyByNip },
 };
 const orchestrationMachine = createOrchestrationMachine(services);
