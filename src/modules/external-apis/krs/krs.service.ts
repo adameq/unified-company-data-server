@@ -212,12 +212,14 @@ export class KrsService {
 
     // Validate KRS number format
     if (!this.isValidKrsNumber(krsNumber)) {
-      throw createErrorResponse({
-        errorCode: 'INVALID_REQUEST_FORMAT',
-        message: `Invalid KRS number format: ${krsNumber}. Expected 10 digits.`,
-        correlationId,
-        source: 'INTERNAL',
-      });
+      throw new BusinessException(
+        createErrorResponse({
+          errorCode: 'INVALID_REQUEST_FORMAT',
+          message: `Invalid KRS number format: ${krsNumber}. Expected 10 digits.`,
+          correlationId,
+          source: 'INTERNAL',
+        }),
+      );
     }
 
     try {
@@ -236,13 +238,15 @@ export class KrsService {
           status: response.status,
         });
 
-        throw createErrorResponse({
-          errorCode: 'ENTITY_NOT_FOUND',
-          message: `Entity not found in ${registry} registry (HTTP 204)`,
-          correlationId,
-          source: 'KRS',
-          details: { registry, krsNumber },
-        });
+        throw new BusinessException(
+          createErrorResponse({
+            errorCode: 'ENTITY_NOT_FOUND',
+            message: `Entity not found in ${registry} registry (HTTP 204)`,
+            correlationId,
+            source: 'KRS',
+            details: { registry, krsNumber },
+          }),
+        );
       }
 
       // Log raw KRS response for debugging

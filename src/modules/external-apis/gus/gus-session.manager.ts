@@ -309,14 +309,16 @@ export class GusSessionManager {
         correlationId,
       });
 
-      throw createErrorResponse({
-        errorCode: 'GUS_AUTHENTICATION_FAILED',
-        message:
-          'Failed to authenticate with GUS service using strong-soap',
-        correlationId,
-        source: 'GUS',
-        details: { originalError: errorMessage },
-      });
+      throw new BusinessException(
+        createErrorResponse({
+          errorCode: 'GUS_AUTHENTICATION_FAILED',
+          message:
+            'Failed to authenticate with GUS service using strong-soap',
+          correlationId,
+          source: 'GUS',
+          details: { originalError: errorMessage },
+        }),
+      );
     }
   }
 

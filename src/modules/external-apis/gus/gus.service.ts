@@ -313,12 +313,14 @@ export class GusService {
       // Validate and normalize REGON
       const cleanRegon = regon.replace(/\s+/g, '').trim();
       if (!/^\d{9}(\d{5})?$/.test(cleanRegon)) {
-        throw createErrorResponse({
-          errorCode: 'INVALID_REQUEST_FORMAT',
-          message: `Invalid REGON format: ${regon}. Expected 9 or 14 digits.`,
-          correlationId,
-          source: 'INTERNAL',
-        });
+        throw new BusinessException(
+          createErrorResponse({
+            errorCode: 'INVALID_REQUEST_FORMAT',
+            message: `Invalid REGON format: ${regon}. Expected 9 or 14 digits.`,
+            correlationId,
+            source: 'INTERNAL',
+          }),
+        );
       }
 
       const reportName = this.getReportNameBySilosId(silosId, correlationId);
@@ -438,12 +440,14 @@ export class GusService {
         }
         return validation.data;
       } else {
-        throw createErrorResponse({
-          errorCode: 'CLASSIFICATION_FAILED',
-          message: `Unsupported entity type: silosId=${silosId}`,
-          correlationId,
-          source: 'GUS',
-        });
+        throw new BusinessException(
+          createErrorResponse({
+            errorCode: 'CLASSIFICATION_FAILED',
+            message: `Unsupported entity type: silosId=${silosId}`,
+            correlationId,
+            source: 'GUS',
+          }),
+        );
       }
     } catch (error) {
       this.logger.error(`Detailed report failed for REGON ${regon}`, {
