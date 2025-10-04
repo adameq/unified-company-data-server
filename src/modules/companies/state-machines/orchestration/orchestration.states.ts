@@ -1,4 +1,5 @@
 import { FullOrchestrationContext } from './orchestration.types';
+import type { ErrorResponse } from '@schemas/error-response.schema';
 
 /**
  * Orchestration Machine States
@@ -12,6 +13,41 @@ import { FullOrchestrationContext } from './orchestration.types';
  * - Mapping states: Transform raw API data to unified format
  * - Final states: Success or failure terminal states
  */
+
+/**
+ * Helper function to convert lastError (with Date timestamp) to ErrorResponse (with ISO string timestamp)
+ *
+ * OrchestrationContext uses Date objects for timestamps (z.date()),
+ * but ErrorResponse requires ISO strings (z.string().datetime()).
+ * This helper bridges the gap when failure states return errors.
+ */
+function convertLastErrorToErrorResponse(
+  context: FullOrchestrationContext,
+  fallbackErrorCode: string,
+  fallbackMessage: string,
+): ErrorResponse {
+  if (context.lastError) {
+    // Convert Date timestamp to ISO string for ErrorResponse
+    return {
+      errorCode: context.lastError.errorCode,
+      message: context.lastError.message,
+      correlationId: context.correlationId,
+      source: context.lastError.source,
+      timestamp: context.lastError.timestamp instanceof Date
+        ? context.lastError.timestamp.toISOString()
+        : context.lastError.timestamp,
+    } as ErrorResponse;
+  }
+
+  // Fallback if lastError not set
+  return {
+    errorCode: fallbackErrorCode,
+    message: fallbackMessage,
+    correlationId: context.correlationId,
+    source: 'INTERNAL',
+    timestamp: new Date().toISOString(),
+  } as ErrorResponse;
+}
 
 /**
  * Fetching GUS classification (initial state)
@@ -370,13 +406,7 @@ export const entityNotFoundFailure = {
   type: 'final' as const,
   entry: 'logEntityNotFound',
   output: ({ context }: { context: FullOrchestrationContext }) =>
-    context.lastError || {
-      errorCode: 'ENTITY_NOT_FOUND',
-      message: 'Entity not found',
-      correlationId: context.correlationId,
-      source: 'INTERNAL',
-      timestamp: new Date().toISOString(),
-    },
+    convertLastErrorToErrorResponse(context, 'ENTITY_NOT_FOUND', 'Entity not found'),
 } as const;
 
 /**
@@ -388,13 +418,7 @@ export const deregisteredFailure = {
   type: 'final' as const,
   entry: 'logDeregisteredEntity',
   output: ({ context }: { context: FullOrchestrationContext }) =>
-    context.lastError || {
-      errorCode: 'ENTITY_DEREGISTERED',
-      message: 'Entity is deregistered',
-      correlationId: context.correlationId,
-      source: 'INTERNAL',
-      timestamp: new Date().toISOString(),
-    },
+    convertLastErrorToErrorResponse(context, 'ENTITY_DEREGISTERED', 'Entity is deregistered'),
 } as const;
 
 /**
@@ -406,13 +430,7 @@ export const systemFaultFailure = {
   type: 'final' as const,
   entry: 'logSystemFault',
   output: ({ context }: { context: FullOrchestrationContext }) =>
-    context.lastError || {
-      errorCode: 'INTERNAL_SERVER_ERROR',
-      message: 'System fault occurred',
-      correlationId: context.correlationId,
-      source: 'INTERNAL',
-      timestamp: new Date().toISOString(),
-    },
+    convertLastErrorToErrorResponse(context, 'INTERNAL_SERVER_ERROR', 'System fault occurred'),
 } as const;
 
 /**
@@ -424,13 +442,7 @@ export const mappingFailure = {
   type: 'final' as const,
   entry: 'logMappingFailure',
   output: ({ context }: { context: FullOrchestrationContext }) =>
-    context.lastError || {
-      errorCode: 'DATA_MAPPING_FAILED',
-      message: 'Data mapping failed',
-      correlationId: context.correlationId,
-      source: 'INTERNAL',
-      timestamp: new Date().toISOString(),
-    },
+    convertLastErrorToErrorResponse(context, 'DATA_MAPPING_FAILED', 'Data mapping failed'),
 } as const;
 
 /**
@@ -441,11 +453,6 @@ export const mappingFailure = {
 export const timeoutFailure = {
   type: 'final' as const,
   entry: 'logTimeoutFailure',
-  output: ({ context }: { context: FullOrchestrationContext }) => ({
-    errorCode: 'TIMEOUT_ERROR',
-    message: 'Company data retrieval timed out',
-    correlationId: context.correlationId,
-    source: 'INTERNAL',
-    timestamp: new Date().toISOString(),
-  }),
+  output: ({ context }: { context: FullOrchestrationContext }) =>
+    convertLastErrorToErrorResponse(context, 'TIMEOUT_ERROR', 'Company data retrieval timed out'),
 } as const;

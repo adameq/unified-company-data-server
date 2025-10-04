@@ -441,12 +441,3 @@ export class GusService {
   }
 
 }
-
-// Export postal code formatter utility
-export function formatPolishPostalCode(code: string): string {
-  // Only format if exactly 5 digits (no dash)
-  if (code.length === 5 && !code.includes('-') && /^\d{5}$/.test(code)) {
-    return `${code.slice(0, 2)}-${code.slice(2)}`;
-  }
-  return code;
-}

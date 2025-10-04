@@ -3,7 +3,7 @@
  * Tests the utility functions that format Polish postal codes
  */
 
-import { formatPolishPostalCode } from '../../../src/modules/external-apis/gus/gus.service';
+import { formatPolishPostalCode } from '../../../src/modules/common/utils/postal-code.utils';
 
 describe('formatPolishPostalCode', () => {
   describe('Valid formatting', () => {
