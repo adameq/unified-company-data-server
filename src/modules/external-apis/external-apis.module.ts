@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { CommonModule } from '@common/common.module';
 import { GusService } from './gus/gus.service';
 import { GusRateLimiterService } from './gus/gus-rate-limiter.service';
 import { GusResponseParser } from './gus/parsers/gus-response.parser';
@@ -33,7 +34,7 @@ import { CeidgV3Service } from './ceidg/ceidg-v3.service';
  */
 
 @Module({
-  imports: [ConfigModule],
+  imports: [ConfigModule, CommonModule],
   providers: [
     // GUS service and dependencies (SRP refactoring)
     GusResponseParser,

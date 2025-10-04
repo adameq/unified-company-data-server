@@ -9,6 +9,7 @@ import {
 import { CorrelationIdMiddleware } from './middleware/correlation-id.middleware';
 import { CorrelationIdInterceptor } from './interceptors/correlation-id.interceptor';
 import { GlobalExceptionFilter } from './filters/global-exception.filter';
+import { AxiosErrorHandler } from './handlers/axios-error.handler';
 
 /**
  * Common Module
@@ -65,10 +66,13 @@ import { GlobalExceptionFilter } from './filters/global-exception.filter';
     },
     // Configuration services
     ThrottlerConfigService,
+    // Error handlers
+    AxiosErrorHandler,
   ],
   exports: [
     // Export shared services for other modules
     ThrottlerConfigService,
+    AxiosErrorHandler,
   ],
 })
 export class CommonModule implements NestModule {

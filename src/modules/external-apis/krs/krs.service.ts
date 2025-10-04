@@ -4,18 +4,13 @@ import axios, { AxiosInstance, AxiosResponse } from 'axios';
 import { z } from 'zod';
 import {
   createErrorResponse,
-  ErrorResponseCreators,
   type ErrorResponse,
+  type ErrorSource,
 } from '@schemas/error-response.schema';
 import { type Environment } from '@config/environment.schema';
 import { BusinessException } from '@common/exceptions/business-exceptions';
-import {
-  isTimeoutError,
-  isNetworkError,
-  hasAxiosStatus,
-  getAxiosStatusCode,
-  isAxiosError,
-} from '@common/utils/error-detection.utils';
+import { AxiosErrorHandler } from '@common/handlers/axios-error.handler';
+import { isAxiosError } from '@common/utils/error-detection.utils';
 
 /**
  * KRS REST Service for Polish Court Register API
@@ -160,6 +155,7 @@ export class KrsService {
 
   constructor(
     private readonly configService: ConfigService<Environment, true>,
+    private readonly axiosErrorHandler: AxiosErrorHandler,
   ) {
     this.config = {
       baseUrl: this.configService.get('KRS_BASE_URL', { infer: true }),
@@ -305,8 +301,14 @@ export class KrsService {
 
       return validatedData;
     } catch (error) {
-      // Convert error to standardized ErrorResponse format
-      const errorResponse = this.handleKrsError(error, correlationId, krsNumber, registry);
+      // Convert error to standardized ErrorResponse format using generic handler
+      const errorResponse = this.axiosErrorHandler.handleAxiosError(
+        error,
+        correlationId,
+        'KRS',
+        { krsNumber, registry, operation: 'fetchFromRegistry' },
+        { statusCodeHandler: this.handleKrsStatusCode.bind(this) },
+      );
       throw new BusinessException(errorResponse);
     }
   }
@@ -409,133 +411,66 @@ export class KrsService {
   }
 
   /**
-   * Handle KRS-specific errors and convert to standardized ErrorResponse
+   * Handle KRS-specific HTTP status codes
    *
-   * Refactored to use type-safe error detection instead of string parsing.
-   * Uses error-detection.utils.ts for resilient error handling.
+   * This method provides custom handling for KRS-specific status codes.
+   * Common status codes (500, 502, 503) are handled by AxiosErrorHandler.
+   *
+   * @param statusCode - HTTP status code
+   * @param error - Original error object
+   * @param correlationId - Request correlation ID
+   * @param source - Error source (always 'KRS')
+   * @param context - KRS-specific context
+   * @returns ErrorResponse for custom status codes, undefined for default handling
    */
-  private handleKrsError(
-    error: any,
+  private handleKrsStatusCode(
+    statusCode: number,
+    error: unknown,
     correlationId: string,
-    krsNumber: string,
-    registry: RegistryType,
-  ): ErrorResponse {
-    // HTTP status-based error handling (using type-safe helpers)
-    const statusCode = getAxiosStatusCode(error);
+    source: ErrorSource,
+    context: { krsNumber?: string; registry?: 'P' | 'S'; operation?: string },
+  ): ErrorResponse | undefined {
+    const { krsNumber, registry } = context;
 
-    if (statusCode !== undefined) {
-      switch (statusCode) {
-        case 404:
-          return createErrorResponse({
-            errorCode: 'ENTITY_NOT_FOUND',
-            message: `Entity not found in KRS registry ${registry} for number: ${krsNumber}`,
-            correlationId,
-            source: 'KRS',
-            details: { krsNumber, registry, status: statusCode },
-          });
+    switch (statusCode) {
+      case 404:
+        return createErrorResponse({
+          errorCode: 'ENTITY_NOT_FOUND',
+          message: `Entity not found in KRS registry ${registry} for number: ${krsNumber}`,
+          correlationId,
+          source: 'KRS',
+          details: { krsNumber, registry, status: statusCode },
+        });
 
-        case 429:
-          const retryAfter = isAxiosError(error)
-            ? error.response?.headers['retry-after']
-            : undefined;
-          const errorResponse = ErrorResponseCreators.rateLimitExceeded(
-            correlationId,
-            'KRS',
-          );
-          return {
-            ...errorResponse,
-            details: {
-              ...errorResponse.details,
-              retryAfter,
-              registry,
-              krsNumber,
-            },
-          };
+      case 429:
+        const retryAfter = isAxiosError(error)
+          ? error.response?.headers['retry-after']
+          : undefined;
+        return createErrorResponse({
+          errorCode: 'KRS_RATE_LIMIT',
+          message: `KRS rate limit exceeded. Retry after ${retryAfter || '60'} seconds.`,
+          correlationId,
+          source: 'KRS',
+          details: {
+            retryAfter,
+            registry,
+            krsNumber,
+          },
+        });
 
-        case 500:
-        case 502:
-        case 503:
-          const statusText = isAxiosError(error)
-            ? error.response?.statusText
-            : 'Service Unavailable';
-          return ErrorResponseCreators.serviceUnavailable(
-            correlationId,
-            'KRS',
-            new Error(`KRS API returned ${statusCode}: ${statusText}`),
-          );
+      case 400:
+        return createErrorResponse({
+          errorCode: 'KRS_INVALID_REGISTRY',
+          message: `Invalid registry type or KRS number format: ${registry}/${krsNumber}`,
+          correlationId,
+          source: 'KRS',
+          details: { registry, krsNumber, status: statusCode },
+        });
 
-        case 400:
-          return createErrorResponse({
-            errorCode: 'KRS_INVALID_REGISTRY',
-            message: `Invalid registry type or KRS number format: ${registry}/${krsNumber}`,
-            correlationId,
-            source: 'KRS',
-            details: { registry, krsNumber, status: statusCode },
-          });
-
-        default:
-          return createErrorResponse({
-            errorCode: 'KRS_SERVICE_UNAVAILABLE',
-            message: `KRS API returned unexpected status: ${statusCode}`,
-            correlationId,
-            source: 'KRS',
-            details: { status: statusCode, registry, krsNumber },
-          });
-      }
+      default:
+        // Return undefined to use AxiosErrorHandler default handling
+        return undefined;
     }
-
-    // Timeout errors (type-safe detection)
-    if (isTimeoutError(error)) {
-      return ErrorResponseCreators.timeoutError(correlationId, 'KRS');
-    }
-
-    // Network/connection errors (type-safe detection)
-    if (isNetworkError(error)) {
-      const errorCode = isAxiosError(error) ? error.code : undefined;
-      const errorMessage = error instanceof Error ? error.message : String(error);
-
-      return createErrorResponse({
-        errorCode: 'KRS_SERVICE_UNAVAILABLE',
-        message: 'Cannot connect to KRS service',
-        correlationId,
-        source: 'KRS',
-        details: {
-          errorCode,
-          registry,
-          krsNumber,
-          originalError: errorMessage,
-        },
-      });
-    }
-
-    // Zod validation errors (invalid response format)
-    if (error.name === 'ZodError') {
-      return createErrorResponse({
-        errorCode: 'DATA_MAPPING_FAILED',
-        message: 'KRS response format validation failed',
-        correlationId,
-        source: 'KRS',
-        details: {
-          registry,
-          krsNumber,
-          validationErrors: error.errors,
-        },
-      });
-    }
-
-    // Generic KRS service error
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return createErrorResponse({
-      errorCode: 'KRS_SERVICE_UNAVAILABLE',
-      message: `Unexpected error during KRS request for ${krsNumber}`,
-      correlationId,
-      source: 'KRS',
-      details: {
-        registry,
-        krsNumber,
-        originalError: errorMessage,
-      },
-    });
   }
 
   /**
