@@ -16,6 +16,66 @@ import { soap } from 'strong-soap';
  */
 
 /**
+ * SOAP operation callback signature for operations returning result + envelope
+ *
+ * Used by operations that need both the result data and SOAP envelope:
+ * - DaneSzukajPodmioty (entity search)
+ * - DanePobierzPelnyRaport (full report retrieval)
+ *
+ * @template TResult - Type of the operation result
+ */
+type SoapOperationCallback<TResult = any> = (
+  err: Error | null,
+  result: TResult,
+  envelope: any,
+  soapHeader?: any,
+) => void;
+
+/**
+ * SOAP operation function signature for multi-value callbacks
+ *
+ * Represents SOAP client methods that take parameters and a callback
+ * returning multiple values (result, envelope, soapHeader).
+ *
+ * @template TParams - Type of operation parameters
+ * @template TResult - Type of operation result
+ */
+type SoapOperation<TParams = any, TResult = any> = (
+  params: TParams,
+  callback: SoapOperationCallback<TResult>,
+) => void;
+
+/**
+ * Simple SOAP operation callback signature for operations returning only result
+ *
+ * Used by operations that only need the result value:
+ * - Zaloguj (login - returns sessionId)
+ * - Wyloguj (logout - returns void/success indicator)
+ *
+ * @template TResult - Type of the operation result
+ */
+type SimpleSoapOperationCallback<TResult = any> = (
+  err: Error | null,
+  result: TResult,
+  envelope?: any,
+  soapHeader?: any,
+) => void;
+
+/**
+ * Simple SOAP operation function signature
+ *
+ * Represents SOAP client methods that take parameters and a callback
+ * returning primarily a single result value.
+ *
+ * @template TParams - Type of operation parameters
+ * @template TResult - Type of operation result
+ */
+type SimpleSoapOperation<TParams = any, TResult = any> = (
+  params: TParams,
+  callback: SimpleSoapOperationCallback<TResult>,
+) => void;
+
+/**
  * Promisified version of soap.createClient
  *
  * Usage:
@@ -82,7 +142,7 @@ export const createSoapClient = promisify<string, any, soap.Client>(
  * ```
  */
 export function callSoapOperation<TResult = any>(
-  operation: Function,
+  operation: SoapOperation<any, TResult>,
   params: any,
   context?: any,
 ): Promise<{ result: TResult; envelope: any }> {
@@ -153,7 +213,7 @@ export function callSoapOperation<TResult = any>(
  * ```
  */
 export function callSimpleSoapOperation<TResult = any>(
-  operation: Function,
+  operation: SimpleSoapOperation<any, TResult>,
   params: any,
   context?: any,
 ): Promise<TResult> {
