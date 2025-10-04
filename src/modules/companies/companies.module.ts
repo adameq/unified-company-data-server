@@ -28,9 +28,7 @@ import { OrchestrationMachineProvider } from './state-machines/orchestration/orc
  * - Concrete implementations injected via machine.provide() in OrchestrationService
  * - Eliminates Service Locator anti-pattern with proper dependency injection
  * - HealthController integrated here to avoid circular CommonModule dependency
- *
- * Exports:
- * - UnifiedDataMapper for data transformation in tests
+ * - UnifiedDataMapper is internal to this module (used by OrchestrationService)
  */
 
 @Module({
@@ -46,9 +44,6 @@ import { OrchestrationMachineProvider } from './state-machines/orchestration/orc
     OrchestrationMachineProvider, // Register base XState machine for DI
     OrchestrationService,
     UnifiedDataMapper,
-  ],
-  exports: [
-    UnifiedDataMapper, // Export for testing and other modules
   ],
 })
 export class CompaniesModule {}
