@@ -104,32 +104,55 @@ export class GlobalExceptionFilter implements ExceptionFilter {
 
   /**
    * Check if exception is a body-parser error (occurs before middleware)
-   * Body-parser throws SyntaxError for malformed JSON
-   * NestJS wraps it in BadRequestException
+   *
+   * INTENTIONAL STRING PARSING - NestJS/Express Framework Limitation
+   *
+   * Problem:
+   * - Body-parser (Express middleware) throws SyntaxError for malformed JSON
+   * - NestJS wraps it in generic BadRequestException (no special error code)
+   * - Error occurs BEFORE CorrelationIdMiddleware runs (no correlation ID available)
+   * - Body-parser does not set error.code or error.type properties
+   *
+   * Alternatives Considered:
+   * - instanceof SyntaxError: Works for direct errors, but NestJS wraps them
+   * - error.code check: Body-parser doesn't set error.code
+   * - error.type check: Body-parser doesn't set error.type
+   * - Custom middleware: Would require forking body-parser or replacing it
+   *
+   * Why This is Acceptable:
+   * - Only used to generate fallback correlation ID (not for error classification)
+   * - Error message patterns are stable in body-parser (json-parse errors)
+   * - This is a framework limitation (Express + NestJS integration)
+   * - Fallback correlation ID is a safety net for edge case (malformed JSON)
+   *
+   * Detection Strategy:
+   * 1. Check if exception is SyntaxError (direct from body-parser)
+   * 2. Check if exception is BadRequestException with SyntaxError-like message
+   *
+   * Body-parser throws SyntaxError for malformed JSON.
+   * NestJS wraps it in BadRequestException.
    */
   private isBodyParserError(exception: unknown): boolean {
-    // Body-parser errors are wrapped in BadRequestException by NestJS
+    // Strategy 1: Direct SyntaxError from body-parser (pre-NestJS wrapping)
+    if (exception instanceof SyntaxError) {
+      return true; // All SyntaxErrors at this layer are from body-parser
+    }
+
+    // Strategy 2: BadRequestException wrapping SyntaxError
     if (exception instanceof HttpException && exception.getStatus() === 400) {
       const response = exception.getResponse();
+
+      // Check if response contains "Unexpected token" or similar JSON parsing errors
+      // These are characteristic of body-parser SyntaxError messages
       const message = typeof response === 'string' ? response : (response as any)?.message || '';
       const messageStr = Array.isArray(message) ? message.join(' ') : String(message);
       const messageLower = messageStr.toLowerCase();
 
-      // Check for body-parser specific error patterns
+      // Body-parser specific error patterns (stable across versions)
       return (
-        messageLower.includes('json') ||
-        messageLower.includes('unexpected token') ||
-        messageLower.includes('parse')
-      );
-    }
-
-    // Also check for direct SyntaxError (pre-NestJS wrapping)
-    if (exception instanceof SyntaxError) {
-      const message = exception.message.toLowerCase();
-      return (
-        message.includes('json') ||
-        message.includes('unexpected') ||
-        message.includes('parse')
+        messageLower.includes('unexpected token') || // "Unexpected token X in JSON at position Y"
+        messageLower.includes('invalid json') ||      // Some versions use this
+        (messageLower.includes('json') && messageLower.includes('parse')) // Generic JSON parse errors
       );
     }
 
@@ -236,18 +259,5 @@ export const ErrorFilterUtils = {
     }
 
     return 'Unknown error';
-  },
-
-  /**
-   * Check if exception should be logged as error vs warning
-   */
-  shouldLogAsError: (exception: unknown): boolean => {
-    if (exception instanceof HttpException) {
-      return exception.getStatus() >= 500;
-    }
-
-    // Validation errors are client errors (handled by ZodErrorHandler)
-    // Unknown exceptions are server errors
-    return !(exception instanceof Error && exception.message.toLowerCase().includes('validation'));
   },
 };

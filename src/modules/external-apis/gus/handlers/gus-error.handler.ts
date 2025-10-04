@@ -4,6 +4,15 @@ import {
   type ErrorResponse,
 } from '@schemas/error-response.schema';
 import type { GusApiError } from '../parsers/gus-response.parser';
+import {
+  isSoapFault,
+  getGusErrorCode,
+  isGusSessionExpiredError,
+  isGusDeserializationError,
+  isTimeoutError,
+  isNetworkError,
+  hasHttpStatus,
+} from '@common/utils/error-detection.utils';
 
 /**
  * GUS Error Handler
@@ -98,75 +107,62 @@ export class GusErrorHandler {
   ): ErrorResponse {
     const errorMessage = error instanceof Error ? error.message : String(error);
 
-    // 1. SOAP fault handling
-    if (error.fault || error.faultstring) {
+    // 1. SOAP fault handling (type-safe check)
+    if (isSoapFault(error)) {
+      // Check for session expiration (type-safe via getGusErrorCode)
+      if (isGusSessionExpiredError(error)) {
+        const errorCode = getGusErrorCode(error);
+        return createErrorResponse({
+          errorCode: 'GUS_SESSION_EXPIRED',
+          message: `GUS session has expired or is invalid (kod=${errorCode})`,
+          correlationId,
+          source: 'GUS',
+          details: { operation, gusErrorCode: errorCode, fault: error.fault },
+        });
+      }
+
+      // Check for deserialization errors (type-safe)
+      if (isGusDeserializationError(error)) {
+        return createErrorResponse({
+          errorCode: 'GUS_SOAP_FAULT',
+          message: 'GUS API rejected XML request due to formatting issues',
+          correlationId,
+          source: 'GUS',
+          details: {
+            operation,
+            fault: error.fault,
+            hint: 'Check XML element formatting and CDATA usage',
+          },
+        });
+      }
+
+      // Generic SOAP fault
       return createErrorResponse({
         errorCode: 'GUS_SOAP_FAULT',
-        message: error.faultstring || error.fault || 'SOAP fault occurred',
+        message: error.fault.faultstring || 'SOAP fault occurred',
         correlationId,
         source: 'GUS',
         details: {
           operation,
-          fault: error.fault,
-          faultstring: error.faultstring,
+          faultcode: error.fault.faultcode,
+          faultstring: error.fault.faultstring,
         },
       });
     }
 
-    // 2. XML deserialization errors (bad XML formatting from GUS)
-    if (
-      errorMessage.includes('DeserializationFailed') ||
-      errorMessage.includes('Error in line') ||
-      errorMessage.includes('Expecting state') ||
-      errorMessage.includes("Encountered 'CDATA'") ||
-      errorMessage.includes("Encountered 'Text'")
-    ) {
-      return createErrorResponse({
-        errorCode: 'GUS_SOAP_FAULT',
-        message: 'GUS API rejected XML request due to formatting issues',
-        correlationId,
-        source: 'GUS',
-        details: {
-          operation,
-          originalError: errorMessage,
-          hint: 'Check XML element formatting and CDATA usage',
-        },
-      });
-    }
-
-    // 3. GUS API error codes (1, 2, 7) indicate session problems
-    if (
-      errorMessage.includes('Błąd') ||
-      errorMessage.includes('Error') ||
-      errorMessage.includes('kod=1') || // Błąd ogólny
-      errorMessage.includes('kod=2') || // Brak sesji lub sesja wygasła
-      errorMessage.includes('kod=7') // Nieprawidłowy identyfikator sesji
-    ) {
+    // 2. HTTP 401 Unauthorized (type-safe check)
+    if (hasHttpStatus(error, 401)) {
       return createErrorResponse({
         errorCode: 'GUS_SESSION_EXPIRED',
-        message: 'GUS session has expired or is invalid',
+        message: 'GUS session unauthorized (HTTP 401)',
         correlationId,
         source: 'GUS',
-        details: { operation, originalError: errorMessage },
+        details: { operation, httpStatus: 401 },
       });
     }
 
-    // 4. HTTP 401 Unauthorized - session problems
-    if (error.response?.status === 401 || errorMessage.includes('401')) {
-      return createErrorResponse({
-        errorCode: 'GUS_SESSION_EXPIRED',
-        message: 'GUS session unauthorized',
-        correlationId,
-        source: 'GUS',
-        details: { operation, originalError: errorMessage },
-      });
-    }
-
-    // 5. Timeout errors
-    if (
-      errorMessage.includes('timed out') ||
-      errorMessage.includes('timeout')
-    ) {
+    // 3. Timeout errors (type-safe check)
+    if (isTimeoutError(error)) {
       return createErrorResponse({
         errorCode: 'TIMEOUT_ERROR',
         message: `GUS ${operation} operation timed out`,
@@ -176,8 +172,9 @@ export class GusErrorHandler {
       });
     }
 
-    // 6. Network/connection errors
-    if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+    // 4. Network/connection errors (type-safe check)
+    if (isNetworkError(error)) {
+      const errorCode = (error as any).code;
       return createErrorResponse({
         errorCode: 'GUS_SERVICE_UNAVAILABLE',
         message: 'Cannot connect to GUS service',
@@ -185,17 +182,21 @@ export class GusErrorHandler {
         source: 'GUS',
         details: {
           operation,
-          errorCode: error.code,
+          errorCode,
           originalError: errorMessage,
         },
       });
     }
 
-    // 7. Generic session expiration patterns
+    // 5. Generic session expiration patterns (INTENTIONAL STRING PARSING - fallback)
+    //
+    // This is a last-resort fallback for session errors not caught by SOAP fault detection.
+    // GUS API sometimes returns session errors in unexpected formats.
+    // Primary detection happens via isSoapFault + getGusErrorCode (type-safe above).
     if (
-      errorMessage.includes('session') ||
-      errorMessage.includes('unauthorized') ||
-      errorMessage.includes('sid')
+      errorMessage.toLowerCase().includes('session') ||
+      errorMessage.toLowerCase().includes('unauthorized') ||
+      errorMessage.toLowerCase().includes('sid')
     ) {
       return createErrorResponse({
         errorCode: 'GUS_SESSION_EXPIRED',
@@ -206,7 +207,7 @@ export class GusErrorHandler {
       });
     }
 
-    // 8. Generic GUS service error (fallback)
+    // 6. Generic GUS service error (fallback)
     return createErrorResponse({
       errorCode: 'GUS_SERVICE_UNAVAILABLE',
       message: `GUS service error during ${operation}`,

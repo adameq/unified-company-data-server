@@ -217,7 +217,19 @@ bootstrap().catch((error: unknown) => {
   logger.error(`Error message: ${errorMessage}`);
 
   // Provide helpful context for common errors
-  if (errorMessage.includes('EADDRINUSE')) {
+  //
+  // INTENTIONAL STRING PARSING - Developer Experience Only
+  //
+  // These error checks are for developer-friendly startup error messages only.
+  // They do not affect application logic or error handling at runtime.
+  //
+  // Why string parsing is acceptable here:
+  // - Node.js error.code for port conflicts: Already checked via error.code === 'EADDRINUSE'
+  // - NestJS DI errors: Framework does not provide error codes for dependency injection failures
+  // - These are development-time errors, not production runtime errors
+  // - Breaking changes to error messages would only affect developer experience, not functionality
+  //
+  if ((error as any).code === 'EADDRINUSE' || errorMessage.includes('EADDRINUSE')) {
     const portMatch = errorMessage.match(/port (\d+)/);
     const port = portMatch ? portMatch[1] : 'unknown';
     logger.error(`\n💡 Port ${port} is already in use. Please:`);
@@ -226,6 +238,7 @@ bootstrap().catch((error: unknown) => {
     logger.error(`   3. Or use: lsof -ti:${port} | xargs kill -9\n`);
   }
 
+  // NestJS dependency injection errors - no error codes available
   if (errorMessage.includes('Cannot resolve dependency') ||
       errorMessage.includes('Nest can\'t resolve dependencies')) {
     logger.error('\n💡 Dependency injection error detected. Check:');

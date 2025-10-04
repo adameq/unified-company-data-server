@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { validateNIP } from '../common/validators/nip.validator';
+import { validateNIP } from '@common/validators/nip.validator';
 
 /**
  * Zod schema for standardized company information returned to API consumers

@@ -1,9 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, ExecutionContext } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { createHash } from 'crypto';
 import { AppModule } from '../../src/app.module';
 import type { Environment } from '../../src/config/environment.schema';
 import { AppValidationPipe } from '../../src/modules/common/pipes/app-validation.pipe';
+import { ThrottlerConfigService } from '../../src/modules/common/config/throttler.config';
 
 /**
  * Test App Setup Helpers
@@ -60,6 +63,26 @@ export interface TestAppOptions {
    * @default false
    */
   withConfigService?: boolean;
+
+  /**
+   * Enable rate limiting for testing
+   *
+   * By default, rate limiting is DISABLED in test environment to allow
+   * rapid test execution without artificial limits. This option enables
+   * rate limiting to test actual rate limit behavior.
+   *
+   * Use this when testing:
+   * - Rate limit enforcement (429 responses)
+   * - Rate limit headers (X-RateLimit-*, Retry-After)
+   * - Per-API-key rate limit isolation
+   * - Rate limit reset behavior
+   *
+   * IMPORTANT: Tests with rate limiting enabled will be slower as they
+   * need to make 100+ requests to trigger rate limits.
+   *
+   * @default false
+   */
+  withRateLimiting?: boolean;
 }
 
 /**
@@ -113,17 +136,76 @@ export interface TestAppResult {
 export async function createTestApp(
   options: TestAppOptions = {},
 ): Promise<TestAppResult> {
-  const { withValidationPipe = false, withConfigService = false } = options;
+  const { withValidationPipe = false, withConfigService = false, withRateLimiting = false } = options;
 
-  // Create testing module with AppModule
-  // AppModule contains all application configuration including:
-  // - Environment validation (ConfigModule)
-  // - Global exception filters
-  // - API key authentication guards
-  // - Rate limiting (disabled in test environment)
-  const moduleFixture: TestingModule = await Test.createTestingModule({
+  // Create testing module builder
+  let moduleBuilder = Test.createTestingModule({
     imports: [AppModule],
-  }).compile();
+  });
+
+  // Override rate limiting configuration if requested
+  if (withRateLimiting) {
+    // Override ThrottlerConfigService to enable rate limiting in tests
+    // By default, rate limiting is disabled in NODE_ENV=test (see throttler.config.ts skipIf)
+    // This override forces rate limiting to be active for testing purposes
+    moduleBuilder = moduleBuilder.overrideProvider(ThrottlerConfigService)
+      .useValue({
+        createThrottlerOptions: () => {
+          const configService = new ConfigService();
+          const rateLimitPerMinute = Number(process.env.APP_RATE_LIMIT_PER_MINUTE || 100);
+
+          return {
+            throttlers: [
+              {
+                name: 'default',
+                ttl: 60 * 1000, // 1 minute
+                limit: rateLimitPerMinute,
+              },
+              {
+                name: 'burst',
+                ttl: 10 * 1000, // 10 seconds
+                limit: Math.min(10, Math.floor(rateLimitPerMinute / 6)),
+              },
+            ],
+            storage: undefined,
+
+            // OVERRIDE: Always enable rate limiting when withRateLimiting: true
+            skipIf: (context: ExecutionContext) => {
+              const request = context.switchToHttp().getRequest();
+              const path = request.path;
+
+              // Still skip health check endpoints
+              if (path?.startsWith('/api/health')) {
+                return true;
+              }
+
+              // DO NOT skip for test environment (this is the key change)
+              return false;
+            },
+
+            generateKey: (context: ExecutionContext, trackerName: string) => {
+              const request = context.switchToHttp().getRequest();
+              const authHeader = request.headers.authorization;
+
+              if (authHeader && authHeader.startsWith('Bearer ')) {
+                const apiKey = authHeader.substring(7);
+                // Use SHA256 hash (same as production) to ensure consistent behavior
+                const apiKeyHash = createHash('sha256').update(apiKey).digest('hex').substring(0, 16);
+                return `${trackerName}:${apiKeyHash}`;
+              }
+
+              const ip = request.ip || 'unknown';
+              return `${trackerName}:${ip}`;
+            },
+
+            errorMessage: 'Rate limit exceeded. Please try again later.',
+          };
+        },
+      });
+  }
+
+  // Compile the testing module
+  const moduleFixture: TestingModule = await moduleBuilder.compile();
 
   // Create application instance
   const app = moduleFixture.createNestApplication();

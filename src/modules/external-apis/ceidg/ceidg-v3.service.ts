@@ -9,6 +9,12 @@ import {
 } from '@schemas/error-response.schema';
 import { type Environment } from '@config/environment.schema';
 import { BusinessException } from '@common/exceptions/business-exceptions';
+import {
+  isTimeoutError,
+  isNetworkError,
+  getAxiosStatusCode,
+  isAxiosError,
+} from '@common/utils/error-detection.utils';
 
 /**
  * CEIDG v3 REST Service for Polish Individual Entrepreneurs Registry
@@ -163,6 +169,9 @@ export class CeidgV3Service {
         Accept: 'application/json',
         'Content-Type': 'application/json',
         Authorization: `Bearer ${this.config.jwtToken}`,
+      },
+      transitional: {
+        clarifyTimeoutError: true, // Distinguish ETIMEDOUT from ECONNABORTED
       },
     });
 
@@ -354,6 +363,9 @@ export class CeidgV3Service {
 
   /**
    * Handle CEIDG-specific errors and convert to standardized ErrorResponse
+   *
+   * Refactored to use type-safe error detection instead of string parsing.
+   * Uses error-detection.utils.ts for resilient error handling.
    */
   private handleCeidgError(
     error: unknown,
@@ -361,25 +373,11 @@ export class CeidgV3Service {
     operation: string,
     context: { nips?: string[] } = {},
   ): ErrorResponse {
-    const errorObj = error as {
-      response?: {
-        status?: number;
-        statusText?: string;
-        headers?: Record<string, string>;
-        data?: { message?: string };
-      };
-      message?: string;
-      code?: string;
-      name?: string;
-      errors?: unknown[];
-    };
+    // HTTP status-based error handling (using type-safe helpers)
+    const statusCode = getAxiosStatusCode(error);
 
-    // HTTP status-based error handling
-    if (errorObj.response?.status) {
-      const status = errorObj.response.status;
-      let retryAfter: string;
-
-      switch (status) {
+    if (statusCode !== undefined) {
+      switch (statusCode) {
         case 401:
           return createErrorResponse({
             errorCode: 'CEIDG_AUTHENTICATION_FAILED',
@@ -387,7 +385,7 @@ export class CeidgV3Service {
               'CEIDG authentication failed - invalid or expired JWT token',
             correlationId,
             source: 'CEIDG',
-            details: { operation, status, nips: context.nips },
+            details: { operation, status: statusCode, nips: context.nips },
           });
 
         case 403:
@@ -396,7 +394,7 @@ export class CeidgV3Service {
             message: 'Insufficient permissions for CEIDG API access',
             correlationId,
             source: 'CEIDG',
-            details: { operation, status, nips: context.nips },
+            details: { operation, status: statusCode, nips: context.nips },
           });
 
         case 404:
@@ -409,7 +407,9 @@ export class CeidgV3Service {
           });
 
         case 429:
-          retryAfter = errorObj.response.headers?.['retry-after'] || '3600'; // Default 1 hour
+          const retryAfter = isAxiosError(error)
+            ? error.response?.headers?.['retry-after'] || '3600'
+            : '3600';
           return createErrorResponse({
             errorCode: 'CEIDG_RATE_LIMIT',
             message: `CEIDG rate limit exceeded. Retry after ${retryAfter} seconds.`,
@@ -425,59 +425,64 @@ export class CeidgV3Service {
         case 500:
         case 502:
         case 503:
+          const statusText = isAxiosError(error)
+            ? error.response?.statusText
+            : 'Service Unavailable';
           return ErrorResponseCreators.serviceUnavailable(
             correlationId,
             'CEIDG',
-            new Error(
-              `CEIDG API returned ${status}: ${errorObj.response.statusText}`,
-            ),
+            new Error(`CEIDG API returned ${statusCode}: ${statusText}`),
           );
 
         case 400:
+          const errorMessage = isAxiosError(error)
+            ? (error.response?.data as any)?.message || 'Bad request'
+            : 'Bad request';
           return createErrorResponse({
             errorCode: 'INVALID_REQUEST_FORMAT',
-            message: `Invalid request format for CEIDG API: ${errorObj.response.data?.message || 'Bad request'}`,
+            message: `Invalid request format for CEIDG API: ${errorMessage}`,
             correlationId,
             source: 'CEIDG',
-            details: { operation, status, nips: context.nips },
+            details: { operation, status: statusCode, nips: context.nips },
           });
 
         default:
           return createErrorResponse({
             errorCode: 'CEIDG_SERVICE_UNAVAILABLE',
-            message: `CEIDG API returned unexpected status: ${status}`,
+            message: `CEIDG API returned unexpected status: ${statusCode}`,
             correlationId,
             source: 'CEIDG',
-            details: { status, operation, nips: context.nips },
+            details: { status: statusCode, operation, nips: context.nips },
           });
       }
     }
 
-    // Timeout errors
-    if (
-      errorObj.code === 'ECONNABORTED' ||
-      (errorObj.message && errorObj.message.includes('timeout'))
-    ) {
+    // Timeout errors (type-safe detection)
+    if (isTimeoutError(error)) {
       return ErrorResponseCreators.timeoutError(correlationId, 'CEIDG');
     }
 
-    // Network/connection errors
-    if (errorObj.code === 'ECONNREFUSED' || errorObj.code === 'ENOTFOUND') {
+    // Network/connection errors (type-safe detection)
+    if (isNetworkError(error)) {
+      const errorCode = isAxiosError(error) ? error.code : undefined;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+
       return createErrorResponse({
         errorCode: 'CEIDG_SERVICE_UNAVAILABLE',
         message: 'Cannot connect to CEIDG service',
         correlationId,
         source: 'CEIDG',
         details: {
-          errorCode: errorObj.code,
+          errorCode,
           operation,
           nips: context.nips,
-          originalError: errorObj.message,
+          originalError: errorMessage,
         },
       });
     }
 
     // Zod validation errors (invalid response format)
+    const errorObj = error as { name?: string; errors?: unknown[] };
     if (errorObj.name === 'ZodError') {
       return createErrorResponse({
         errorCode: 'DATA_MAPPING_FAILED',
@@ -493,6 +498,7 @@ export class CeidgV3Service {
     }
 
     // Generic CEIDG service error
+    const genericMessage = error instanceof Error ? error.message : String(error);
     return createErrorResponse({
       errorCode: 'CEIDG_SERVICE_UNAVAILABLE',
       message: `Unexpected error during CEIDG ${operation}`,
@@ -501,7 +507,7 @@ export class CeidgV3Service {
       details: {
         operation,
         nips: context.nips,
-        originalError: errorObj.message,
+        originalError: genericMessage,
       },
     });
   }

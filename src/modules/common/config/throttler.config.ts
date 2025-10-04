@@ -5,8 +5,25 @@ import {
   ThrottlerModuleOptions,
 } from '@nestjs/throttler';
 import { Request } from 'express';
+import { createHash } from 'crypto';
 import { type Environment } from '@config/environment.schema';
 import { extractBearerToken, maskApiKey } from '../utils/auth.utils';
+
+/**
+ * Hash API key for rate limiting identification
+ *
+ * Uses SHA256 to create a unique, secure identifier from API key.
+ * This prevents:
+ * - Collision: Two different API keys with same prefix won't share limits
+ * - Security: API key fragments don't appear in logs/metrics
+ * - Predictability: Changing key prefix doesn't affect identifier
+ *
+ * @param apiKey - Full API key to hash
+ * @returns First 16 characters of SHA256 hash (sufficient for uniqueness)
+ */
+function hashApiKeyForRateLimit(apiKey: string): string {
+  return createHash('sha256').update(apiKey).digest('hex').substring(0, 16);
+}
 
 /**
  * Throttler Configuration for Rate Limiting
@@ -85,8 +102,8 @@ export class ThrottlerConfigService implements ThrottlerOptionsFactory {
         // Use API key as identifier if available, otherwise fall back to IP
         const apiKey = extractBearerToken(request);
         if (apiKey) {
-          // Use first 16 characters of API key for grouping
-          return `${trackerName}:${apiKey.substring(0, 16)}`;
+          const apiKeyHash = hashApiKeyForRateLimit(apiKey);
+          return `${trackerName}:${apiKeyHash}`;
         }
 
         // Fall back to IP address
@@ -105,7 +122,7 @@ export class ThrottlerConfigService implements ThrottlerOptionsFactory {
  */
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { Injectable as GuardInjectable } from '@nestjs/common';
-import { BusinessException } from '../../../common/exceptions/business-exceptions';
+import { BusinessException } from '@common/exceptions/business-exceptions';
 
 @GuardInjectable()
 export class CustomThrottlerGuard extends ThrottlerGuard {
@@ -143,7 +160,7 @@ export class CustomThrottlerGuard extends ThrottlerGuard {
     // Use API key for tracking if available
     const apiKey = extractBearerToken(req);
     if (apiKey) {
-      return apiKey.substring(0, 16); // Use first 16 chars for grouping
+      return hashApiKeyForRateLimit(apiKey);
     }
 
     // Fall back to IP address

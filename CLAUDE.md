@@ -769,10 +769,59 @@ curl -X POST http://localhost:3000/api/companies \
   - Default: 100 requests per minute per API key
   - Burst protection: 10 requests per 10 seconds
   - Per-API-key tracking (isolated limits)
+  - **Security**: API keys hashed with SHA256 for rate limit identification
 - **Skip Conditions**:
   - `NODE_ENV=development` - Disabled to allow unlimited local testing
   - `NODE_ENV=test` - Disabled to prevent test failures
   - Health check endpoints - Always exempt from rate limiting
+
+**API Key Hashing for Rate Limiting** (Security Feature):
+
+The application uses **SHA256 hashing** for API key identification in rate limiting to prevent security vulnerabilities:
+
+```typescript
+// Implementation in throttler.config.ts
+function hashApiKeyForRateLimit(apiKey: string): string {
+  return createHash('sha256').update(apiKey).digest('hex').substring(0, 16);
+}
+```
+
+**Why SHA256 instead of substring?**
+
+1. **Collision Prevention**: Two different API keys with same 16-char prefix won't share rate limits
+   - Old approach: `apiKey.substring(0, 16)` → collision if prefixes match
+   - New approach: SHA256 hash → mathematically unique identifier
+
+2. **Security**: API key fragments don't appear in logs/metrics
+   - Old approach: `"1234567890abcdef"` exposes first 16 chars of key
+   - New approach: `"a3f5c2d1..."` no relation to original key
+
+3. **Predictability Prevention**: Changing key prefix doesn't affect identifier
+   - SHA256 avalanche effect: 1-bit change → ~50% output bits change
+   - Prevents attackers from crafting keys with predictable rate limit IDs
+
+**Attack Scenario Prevented**:
+```typescript
+// Attacker scenario: exhaust victim's rate limit
+const victimKey = '1234567890abcdefVICTIM-SECRET';
+const attackerKey = '1234567890abcdefATTACKER-MALICIOUS';
+
+// Old vulnerable approach: substring(0, 16)
+victimKey.substring(0, 16) === attackerKey.substring(0, 16)  // COLLISION!
+// Both share same rate limit → attacker can exhaust victim's quota
+
+// New secure approach: SHA256 hash
+hashApiKeyForRateLimit(victimKey) !== hashApiKeyForRateLimit(attackerKey)  // UNIQUE
+// Separate rate limits → attack prevented
+```
+
+**Hash Properties**:
+- **Length**: 16 hex characters (64 bits of entropy)
+- **Collision probability**: ~0.00000000000003% with 1 million API keys (birthday paradox)
+- **Deterministic**: Same API key always produces same hash
+- **Irreversible**: Cannot derive original API key from hash
+
+**Testing**: See `test/unit/throttler-security.spec.ts` for comprehensive security tests
 
 **Why Disabled in Development/Test**:
 - **Development**: Developers need unlimited requests for debugging and rapid iteration

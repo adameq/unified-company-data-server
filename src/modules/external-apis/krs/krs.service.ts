@@ -9,6 +9,13 @@ import {
 } from '@schemas/error-response.schema';
 import { type Environment } from '@config/environment.schema';
 import { BusinessException } from '@common/exceptions/business-exceptions';
+import {
+  isTimeoutError,
+  isNetworkError,
+  hasAxiosStatus,
+  getAxiosStatusCode,
+  isAxiosError,
+} from '@common/utils/error-detection.utils';
 
 /**
  * KRS REST Service for Polish Court Register API
@@ -169,6 +176,9 @@ export class KrsService {
       headers: {
         Accept: 'application/json',
         'Content-Type': 'application/json',
+      },
+      transitional: {
+        clarifyTimeoutError: true, // Distinguish ETIMEDOUT from ECONNABORTED
       },
     });
 
@@ -400,6 +410,9 @@ export class KrsService {
 
   /**
    * Handle KRS-specific errors and convert to standardized ErrorResponse
+   *
+   * Refactored to use type-safe error detection instead of string parsing.
+   * Uses error-detection.utils.ts for resilient error handling.
    */
   private handleKrsError(
     error: any,
@@ -407,22 +420,24 @@ export class KrsService {
     krsNumber: string,
     registry: RegistryType,
   ): ErrorResponse {
-    // HTTP status-based error handling
-    if (error.response?.status) {
-      const status = error.response.status;
+    // HTTP status-based error handling (using type-safe helpers)
+    const statusCode = getAxiosStatusCode(error);
 
-      switch (status) {
+    if (statusCode !== undefined) {
+      switch (statusCode) {
         case 404:
           return createErrorResponse({
             errorCode: 'ENTITY_NOT_FOUND',
             message: `Entity not found in KRS registry ${registry} for number: ${krsNumber}`,
             correlationId,
             source: 'KRS',
-            details: { krsNumber, registry, status },
+            details: { krsNumber, registry, status: statusCode },
           });
 
         case 429:
-          const retryAfter = error.response.headers['retry-after'];
+          const retryAfter = isAxiosError(error)
+            ? error.response?.headers['retry-after']
+            : undefined;
           const errorResponse = ErrorResponseCreators.rateLimitExceeded(
             correlationId,
             'KRS',
@@ -440,12 +455,13 @@ export class KrsService {
         case 500:
         case 502:
         case 503:
+          const statusText = isAxiosError(error)
+            ? error.response?.statusText
+            : 'Service Unavailable';
           return ErrorResponseCreators.serviceUnavailable(
             correlationId,
             'KRS',
-            new Error(
-              `KRS API returned ${status}: ${error.response.statusText}`,
-            ),
+            new Error(`KRS API returned ${statusCode}: ${statusText}`),
           );
 
         case 400:
@@ -454,37 +470,40 @@ export class KrsService {
             message: `Invalid registry type or KRS number format: ${registry}/${krsNumber}`,
             correlationId,
             source: 'KRS',
-            details: { registry, krsNumber, status },
+            details: { registry, krsNumber, status: statusCode },
           });
 
         default:
           return createErrorResponse({
             errorCode: 'KRS_SERVICE_UNAVAILABLE',
-            message: `KRS API returned unexpected status: ${status}`,
+            message: `KRS API returned unexpected status: ${statusCode}`,
             correlationId,
             source: 'KRS',
-            details: { status, registry, krsNumber },
+            details: { status: statusCode, registry, krsNumber },
           });
       }
     }
 
-    // Timeout errors
-    if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+    // Timeout errors (type-safe detection)
+    if (isTimeoutError(error)) {
       return ErrorResponseCreators.timeoutError(correlationId, 'KRS');
     }
 
-    // Network/connection errors
-    if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+    // Network/connection errors (type-safe detection)
+    if (isNetworkError(error)) {
+      const errorCode = isAxiosError(error) ? error.code : undefined;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+
       return createErrorResponse({
         errorCode: 'KRS_SERVICE_UNAVAILABLE',
         message: 'Cannot connect to KRS service',
         correlationId,
         source: 'KRS',
         details: {
-          errorCode: error.code,
+          errorCode,
           registry,
           krsNumber,
-          originalError: error.message,
+          originalError: errorMessage,
         },
       });
     }
@@ -505,6 +524,7 @@ export class KrsService {
     }
 
     // Generic KRS service error
+    const errorMessage = error instanceof Error ? error.message : String(error);
     return createErrorResponse({
       errorCode: 'KRS_SERVICE_UNAVAILABLE',
       message: `Unexpected error during KRS request for ${krsNumber}`,
@@ -513,7 +533,7 @@ export class KrsService {
       details: {
         registry,
         krsNumber,
-        originalError: error.message,
+        originalError: errorMessage,
       },
     });
   }

@@ -112,6 +112,20 @@ export class UnifiedDataMapper {
 
       return validatedData;
     } catch (error) {
+      // ZodError: Rethrow to allow ZodErrorHandler to process (preserves validation context)
+      if (error instanceof z.ZodError) {
+        this.logger.error('Data validation failed (ZodError)', {
+          correlationId: context.correlationId,
+          nip: context.nip,
+          validationIssues: error.issues.map((issue) => ({
+            path: issue.path.join('.'),
+            message: issue.message,
+          })),
+        });
+        throw error; // Let ZodErrorHandler handle it
+      }
+
+      // Other errors: Wrap in BusinessException with DATA_MAPPING_FAILED
       this.logger.error('Data mapping failed', {
         correlationId: context.correlationId,
         nip: context.nip,

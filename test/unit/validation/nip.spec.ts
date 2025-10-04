@@ -1,9 +1,9 @@
 import { z } from 'zod';
-import { validateNIP } from '../../../src/common/validators/nip.validator';
+import { validateNIP } from '@common/validators/nip.validator';
 
 /**
  * Unit tests for NIP validation
- * Tests the NIP validation function from src/common/validators/nip.validator.ts
+ * Tests the NIP validation function from src/modules/common/validators/nip.validator.ts
  *
  * NIP (Tax Identification Number) must:
  * - Be exactly 10 digits

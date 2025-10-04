@@ -88,6 +88,29 @@ export class AppValidationPipe extends ValidationPipe {
   /**
    * Check if BadRequestException is from whitelist validation
    *
+   * INTENTIONAL STRING PARSING - NestJS Framework Limitation
+   *
+   * Problem:
+   * - NestJS ValidationPipe does not provide structured error codes for whitelist violations
+   * - The message format "property {name} should not exist" is hardcoded in @nestjs/common
+   * - Both normal validation and whitelist violations throw BadRequestException
+   * - No other way to distinguish between them without parsing message
+   *
+   * Alternatives Considered:
+   * - Checking error structure: Not possible - same BadRequestException type
+   * - Custom decorators: Would require forking ValidationPipe
+   * - Error codes: Not provided by framework
+   * - instanceof checks: Both are BadRequestException
+   *
+   * Why This is Acceptable:
+   * - Message format is part of NestJS public API (hardcoded in framework)
+   * - Breaking changes to message format are unlikely (would break many apps)
+   * - This is a NestJS framework limitation, not a code smell
+   * - String is only parsed once at validation boundary, not propagated
+   *
+   * @see https://github.com/nestjs/nest/blob/master/packages/common/pipes/validation.pipe.ts
+   * @see https://github.com/nestjs/nest/issues/1267
+   *
    * ValidationPipe throws BadRequestException with array messages for whitelist violations.
    * Message format: ["property {fieldName} should not exist"]
    */

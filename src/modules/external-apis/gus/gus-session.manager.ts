@@ -8,6 +8,7 @@ import {
 import { BusinessException } from '@common/exceptions/business-exceptions';
 import type { GusSession, GusConfig } from './interfaces/gus-session.interface';
 import { GusSoapClient } from './gus-soap-client.facade';
+import { isTimeoutError, isNetworkError, isNodeError } from '@common/utils/error-detection.utils';
 import { GusHeaderManager } from './gus-header.manager';
 import {
   createSoapClient,
@@ -314,12 +315,8 @@ export class GusSessionManager {
 
       // Detailed error analysis for better diagnostics
 
-      // 1. Timeout errors (WSDL loading or Zaloguj operation)
-      if (
-        errorObj.code === 'ECONNABORTED' ||
-        errorMessage.includes('timeout') ||
-        errorMessage.includes('ETIMEDOUT')
-      ) {
+      // 1. Timeout errors - type-safe detection
+      if (isTimeoutError(errorObj)) {
         throw new BusinessException(
           createErrorResponse({
             errorCode: 'TIMEOUT_ERROR',
@@ -335,14 +332,8 @@ export class GusSessionManager {
         );
       }
 
-      // 2. Network/connection errors
-      if (
-        errorObj.code === 'ECONNREFUSED' ||
-        errorObj.code === 'ENOTFOUND' ||
-        errorObj.code === 'ECONNRESET' ||
-        errorMessage.includes('socket hang up') ||
-        errorMessage.includes('getaddrinfo')
-      ) {
+      // 2. Network/connection errors - type-safe detection
+      if (isNetworkError(errorObj)) {
         throw new BusinessException(
           createErrorResponse({
             errorCode: 'GUS_CONNECTION_ERROR',
@@ -359,12 +350,17 @@ export class GusSessionManager {
         );
       }
 
-      // 3. WSDL parsing errors (invalid XML, schema errors)
+      // 3. WSDL parsing errors (INTENTIONAL STRING PARSING - strong-soap limitation)
+      //
+      // strong-soap does not provide error codes for WSDL parsing failures.
+      // These errors occur during WSDL download/parsing, not during SOAP operations.
+      // Error messages are the only way to detect WSDL-specific issues.
+      //
+      // This is a library limitation, not a code smell.
       if (
         errorMessage.toLowerCase().includes('wsdl') ||
         errorMessage.toLowerCase().includes('parse') ||
-        errorMessage.toLowerCase().includes('invalid') ||
-        errorMessage.toLowerCase().includes('xml')
+        (errorMessage.toLowerCase().includes('invalid') && errorMessage.toLowerCase().includes('xml'))
       ) {
         throw new BusinessException(
           createErrorResponse({

@@ -8,6 +8,7 @@ import {
 } from '@schemas/error-response.schema';
 import { BusinessException } from '@common/exceptions/business-exceptions';
 import { ValidationException } from '../exceptions/validation.exception';
+import { isTimeoutError, isNetworkError } from '@common/utils/error-detection.utils';
 
 /**
  * Exception Handler Strategy Pattern
@@ -157,10 +158,9 @@ export class ZodErrorHandler implements ExceptionHandler {
     const zodError = exception as ZodError;
 
     // Check if this is a NIP validation error
-    const nipError = zodError.issues.find(
-      (issue) =>
-        issue.path.includes('nip') ||
-        issue.message.toLowerCase().includes('nip'),
+    // Use issue.path (controlled by our schemas) instead of message parsing
+    const nipError = zodError.issues.find((issue) =>
+      issue.path.includes('nip'),
     );
 
     const errorCode = nipError
@@ -188,17 +188,17 @@ export class ZodErrorHandler implements ExceptionHandler {
 }
 
 /**
- * Handler for timeout errors (Error with "timeout" in message)
+ * Handler for timeout errors
+ *
+ * Refactored to use type-safe error detection.
+ * Checks error.code (ECONNABORTED, ETIMEDOUT) instead of message parsing.
  */
 export class TimeoutErrorHandler implements ExceptionHandler {
   priority = 5;
   name = 'TimeoutErrorHandler';
 
   canHandle(exception: unknown): boolean {
-    return (
-      exception instanceof Error &&
-      exception.message.toLowerCase().includes('timeout')
-    );
+    return isTimeoutError(exception);
   }
 
   handle(exception: unknown, correlationId: string): ErrorResponse {
@@ -217,19 +217,17 @@ export class TimeoutErrorHandler implements ExceptionHandler {
 }
 
 /**
- * Handler for network errors (Error with "network" or "connection" in message)
+ * Handler for network errors
+ *
+ * Refactored to use type-safe error detection.
+ * Checks error.code (ECONNREFUSED, ENOTFOUND, ECONNRESET) instead of message parsing.
  */
 export class NetworkErrorHandler implements ExceptionHandler {
   priority = 6;
   name = 'NetworkErrorHandler';
 
   canHandle(exception: unknown): boolean {
-    if (!(exception instanceof Error)) {
-      return false;
-    }
-
-    const msg = exception.message.toLowerCase();
-    return msg.includes('network') || msg.includes('connection');
+    return isNetworkError(exception);
   }
 
   handle(exception: unknown, correlationId: string): ErrorResponse {
