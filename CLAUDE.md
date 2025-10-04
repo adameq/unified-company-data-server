@@ -56,8 +56,17 @@ src/
 │   │           ├── gus-retry.strategy.ts
 │   │           ├── krs-retry.strategy.ts
 │   │           └── ceidg-retry.strategy.ts
-│   ├── external-apis/               # API adapters (stubs)
-│   │   ├── gus/                     # GUS SOAP service
+│   ├── external-apis/               # API adapters
+│   │   ├── gus/                     # GUS SOAP service (SRP refactored)
+│   │   │   ├── parsers/             # XML parsing and extraction
+│   │   │   │   └── gus-response.parser.ts
+│   │   │   ├── validators/          # Zod schema validation
+│   │   │   │   └── gus-response.validator.ts
+│   │   │   ├── handlers/            # Error handling
+│   │   │   │   └── gus-error.handler.ts
+│   │   │   ├── gus.service.ts       # Orchestration facade
+│   │   │   ├── gus-session.manager.ts
+│   │   │   └── gus-rate-limiter.service.ts
 │   │   ├── krs/                     # KRS REST service
 │   │   └── ceidg/                   # CEIDG REST service
 │   └── common/                      # Shared utilities
@@ -612,7 +621,15 @@ The service uses **real Polish government APIs** for data retrieval:
 
 #### GUS API Implementation Details
 
-The GUS service (`gus.service.ts`) uses **strong-soap v5.0.2** with custom request interceptor:
+The GUS service follows **Single Responsibility Principle** with 4 dedicated classes:
+
+**Architecture (SRP Refactoring)**:
+- **GusResponseParser** (`parsers/gus-response.parser.ts`): XML parsing and extraction from SOAP envelopes
+- **GusResponseValidator** (`validators/gus-response.validator.ts`): Zod schema validation for all response types
+- **GusErrorHandler** (`handlers/gus-error.handler.ts`): Error conversion to standardized ErrorResponse format
+- **GusService** (`gus.service.ts`): Orchestration facade coordinating all dependencies
+
+The GUS service uses **strong-soap v5.0.2** with custom request interceptor:
 
 1. **WS-Addressing Headers**: Custom interceptor injects required SOAP headers without `soap:mustUnderstand` attributes
 2. **DataContract Namespace**: Added at Envelope level (`xmlns:dat`) to avoid inline namespace declarations

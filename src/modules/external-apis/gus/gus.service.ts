@@ -1,31 +1,35 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { soap } from 'strong-soap';
-import { z } from 'zod';
-import { parseStringPromise } from 'xml2js';
-import { stripPrefix } from 'xml2js/lib/processors';
-import {
-  createErrorResponse,
-  type ErrorResponse,
-} from '@schemas/error-response.schema';
+import { createErrorResponse } from '@schemas/error-response.schema';
 import { type Environment } from '@config/environment.schema';
 import { BusinessException } from '@common/exceptions/business-exceptions';
 import { GusSessionManager } from './gus-session.manager';
 import { GusRateLimiterService } from './gus-rate-limiter.service';
 import { GusSession, GusConfig } from './interfaces/gus-session.interface';
+import { createSoapClient } from './gus-soap.helpers';
+import { GusResponseParser } from './parsers/gus-response.parser';
 import {
-  createSoapClient,
-  extractSoapResult,
-} from './gus-soap.helpers';
+  GusResponseValidator,
+  type GusClassificationResponse,
+  type GusLegalPersonReport,
+  type GusPhysicalPersonReport,
+} from './validators/gus-response.validator';
+import { GusErrorHandler } from './handlers/gus-error.handler';
 
 /**
  * GUS SOAP Service for Polish Statistical Office API
  *
- * Handles:
- * - Session-based authentication with 30-minute timeout
- * - Company classification via DaneSzukajPodmioty
- * - Detailed reports via DanePobierzPelnyRaport
- * - SOAP fault handling and error recovery
+ * Refactored to follow Single Responsibility Principle:
+ * - This service now acts as a facade/orchestrator
+ * - Parsing delegated to GusResponseParser
+ * - Validation delegated to GusResponseValidator
+ * - Error handling delegated to GusErrorHandler
+ *
+ * Responsibilities:
+ * - Orchestrate SOAP operations (DaneSzukajPodmioty, DanePobierzPelnyRaport)
+ * - Manage rate limiting and session lifecycle
+ * - Coordinate parsing, validation, and error handling
  *
  * Retry Strategy:
  * - Service-level retry is NOT implemented (methods throw errors directly)
@@ -35,76 +39,14 @@ import {
  * - No retry on: 404 Not Found, validation errors
  * - Exponential backoff with jitter managed by retry.machine.ts
  * - Session recovery: On session errors, new session is created before retry
- *
- * Constitutional compliance:
- * - All responses validated with Zod schemas
- * - Defensive programming against SOAP faults
- * - Structured logging with correlation IDs
- * - Timeout and retry handling via state machines
  */
 
-// GUS API operation schemas for validation
-export const GusClassificationResponseSchema = z.object({
-  Regon: z.string().regex(/^\d{9}(\d{5})?$/),
-  Nip: z.string().regex(/^\d{10}$/),
-  Nazwa: z.string(),
-  Typ: z.string(),
-  SilosID: z.enum(['1', '2', '4', '6']),
-  Wojewodztwo: z.string().optional(),
-  Powiat: z.string().optional(),
-  Gmina: z.string().optional(),
-  Miejscowosc: z.string().optional(),
-  KodPocztowy: z.string().optional(),
-  Ulica: z.string().optional(),
-  NrNieruchomosci: z.string().optional(),
-  NrLokalu: z.string().optional(),
-  DataZakonczeniaDzialalnosci: z.string().optional(),
-  MiejscowoscPoczty: z.string().optional(),
-});
-
-export const GusLegalPersonReportSchema = z.object({
-  praw_regon9: z.string(),
-  praw_nip: z.string(),
-  praw_nazwa: z.string(),
-  praw_numerWRejestrzeEwidencji: z.string().optional(),
-  praw_dataRozpoczeciaDzialalnosci: z.string().optional(),
-  praw_dataZakonczeniaDzialalnosci: z.string().optional(),
-  praw_adSiedzKodPocztowy: z.string(),
-  praw_adSiedzNumerNieruchomosci: z.string().optional(),
-  praw_adSiedzNumerLokalu: z.string().optional(),
-  praw_adSiedzWojewodztwo_Nazwa: z.string(),
-  praw_adSiedzPowiat_Nazwa: z.string().optional(),
-  praw_adSiedzGmina_Nazwa: z.string().optional(),
-  praw_adSiedzMiejscowosc_Nazwa: z.string(),
-  praw_adSiedzUlica_Nazwa: z.string().optional(),
-  praw_podstawowaFormaPrawna_Nazwa: z.string().optional(),
-  praw_szczegolnaFormaPrawna_Nazwa: z.string().optional(),
-});
-
-export const GusPhysicalPersonReportSchema = z.object({
-  fiz_regon9: z.string(),
-  fiz_nip: z.string().optional(),
-  fiz_nazwa: z.string(),
-  fiz_dataRozpoczeciaDzialalnosci: z.string().optional(),
-  fiz_dataZakonczeniaDzialalnosci: z.string().optional(),
-  fiz_adSiedzKodPocztowy: z.string(),
-  fiz_adSiedzNumerNieruchomosci: z.string().optional(),
-  fiz_adSiedzNumerLokalu: z.string().optional(),
-  fiz_adSiedzWojewodztwo_Nazwa: z.string(),
-  fiz_adSiedzPowiat_Nazwa: z.string().optional(),
-  fiz_adSiedzGmina_Nazwa: z.string().optional(),
-  fiz_adSiedzMiejscowosc_Nazwa: z.string(),
-  fiz_adSiedzUlica_Nazwa: z.string().optional(),
-});
-
-// Types inferred from schemas
-export type GusClassificationResponse = z.infer<
-  typeof GusClassificationResponseSchema
->;
-export type GusLegalPersonReport = z.infer<typeof GusLegalPersonReportSchema>;
-export type GusPhysicalPersonReport = z.infer<
-  typeof GusPhysicalPersonReportSchema
->;
+// Re-export types from validator for backward compatibility
+export type {
+  GusClassificationResponse,
+  GusLegalPersonReport,
+  GusPhysicalPersonReport,
+} from './validators/gus-response.validator';
 
 @Injectable()
 export class GusService {
@@ -115,6 +57,9 @@ export class GusService {
   constructor(
     private readonly configService: ConfigService<Environment, true>,
     private readonly rateLimiter: GusRateLimiterService,
+    private readonly parser: GusResponseParser,
+    private readonly validator: GusResponseValidator,
+    private readonly errorHandler: GusErrorHandler,
   ) {
     this.config = {
       baseUrl: this.configService.get('GUS_BASE_URL', { infer: true }),
@@ -130,6 +75,15 @@ export class GusService {
 
   /**
    * Get company classification by NIP to determine routing strategy
+   *
+   * Refactored to delegate responsibilities:
+   * - Session management → GusSessionManager
+   * - Rate limiting → GusRateLimiterService
+   * - XML extraction → GusResponseParser.extractSoapResult()
+   * - XML parsing → GusResponseParser.parseXmlResponse()
+   * - Error detection → GusResponseParser.detectGusError()
+   * - Validation → GusResponseValidator.validateClassification()
+   * - Error handling → GusErrorHandler.handleGusApiError() / handleSoapError()
    */
   async getClassificationByNip(
     nip: string,
@@ -140,14 +94,13 @@ export class GusService {
     });
 
     try {
-      // Get active session (will be created if expired)
+      // 1. Session management
       const session = await this.sessionManager.getSession(correlationId);
 
-      // Normalize NIP (remove spaces)
+      // 2. Normalize NIP (remove spaces)
       const cleanNip = nip.replace(/\s+/g, '').trim();
 
-      // Rate limiting: Ensure we don't exceed GUS API rate limits
-      // Uses Bottleneck token bucket algorithm to queue concurrent requests
+      // 3. Rate limiting
       await this.rateLimiter.schedule(() => Promise.resolve());
 
       this.logger.log('Calling DaneSzukajPodmioty operation', {
@@ -155,8 +108,8 @@ export class GusService {
         correlationId,
       });
 
-      // Call DaneSzukajPodmioty using facade (headers automatically injected)
-      const { result, envelope } = await session.soapClient
+      // 4. Execute SOAP operation
+      const { result } = await session.soapClient
         .daneSzukajPodmioty({
           Nip: cleanNip,
         })
@@ -184,15 +137,11 @@ export class GusService {
         correlationId,
       });
 
-      // Extract XML data from SOAP result using case-insensitive helper
-      // Handles strong-soap's inconsistent XML parsing (PascalCase vs lowercase)
-      const xmlData = extractSoapResult(result, 'DaneSzukajPodmioty');
+      // 5. Parse response (delegated to GusResponseParser)
+      const xmlData = this.parser.extractSoapResult(result, 'DaneSzukajPodmioty');
 
-      if (
-        !xmlData ||
-        xmlData.trim() === '<root></root>' ||
-        xmlData.trim() === ''
-      ) {
+      // Check if empty (common pattern for "not found")
+      if (this.parser.isEmptyXmlData(xmlData)) {
         const errorResponse = createErrorResponse({
           errorCode: 'ENTITY_NOT_FOUND',
           message: `No entity found for NIP: ${nip}`,
@@ -202,63 +151,25 @@ export class GusService {
         throw new BusinessException(errorResponse);
       }
 
-      // Always parse XML first, then check for errors in parsed object
-      const parsedData = await this.parseXmlResponse(xmlData, correlationId);
+      const parsedData = await this.parser.parseXmlResponse(xmlData, correlationId);
 
-      // Check for GUS error responses in parsed object (not raw XML string)
-      const errorCode = parsedData?.dane?.ErrorCode || parsedData?.ErrorCode;
-      if (errorCode) {
-        const errorMessage =
-          parsedData?.dane?.ErrorMessagePl ||
-          parsedData?.ErrorMessagePl ||
-          'Unknown GUS error';
-
-        if (errorCode === '4') {
-          const errorResponse = createErrorResponse({
-            errorCode: 'ENTITY_NOT_FOUND',
-            message: `No entity found for NIP: ${nip}`,
-            correlationId,
-            source: 'GUS',
-            details: { gusErrorCode: errorCode, gusErrorMessage: errorMessage },
-          });
-          throw new BusinessException(errorResponse);
-        }
-
-        // Handle other GUS errors
-        const errorResponse = createErrorResponse({
-          errorCode: 'GUS_SERVICE_UNAVAILABLE',
-          message: `GUS service error: ${errorMessage}`,
-          correlationId,
-          source: 'GUS',
-          details: { gusErrorCode: errorCode, gusErrorMessage: errorMessage },
-        });
-        throw new BusinessException(errorResponse);
-      }
-
-      // Validate response with Zod using safeParse
-      const validation = GusClassificationResponseSchema.safeParse(parsedData);
-      if (!validation.success) {
-        this.logger.error(`GUS classification response failed schema validation`, {
+      // 6. Detect GUS API errors (delegated to GusResponseParser)
+      const gusError = this.parser.detectGusError(parsedData);
+      if (gusError) {
+        const errorResponse = this.errorHandler.handleGusApiError(
+          gusError,
           correlationId,
           nip,
-          zodErrors: validation.error.issues,
-          dataPreview: JSON.stringify(parsedData).substring(0, 500),
-        });
-
-        const errorResponse = createErrorResponse({
-          errorCode: 'GUS_VALIDATION_FAILED',
-          message: 'GUS classification response failed schema validation',
-          correlationId,
-          source: 'GUS',
-          details: {
-            zodErrors: validation.error.issues,
-            nip,
-          },
-        });
+        );
         throw new BusinessException(errorResponse);
       }
 
-      const classificationData = validation.data;
+      // 7. Validate with Zod (delegated to GusResponseValidator)
+      const classificationData = this.validator.validateClassification(
+        parsedData,
+        correlationId,
+        nip,
+      );
 
       this.logger.log(
         `Classification found: silosId=${classificationData.SilosID}`,
@@ -284,14 +195,32 @@ export class GusService {
         throw error;
       }
 
-      // Convert other errors to BusinessException
-      const errorResponse = this.handleGusError(error, correlationId, 'classification');
+      // Convert other errors to BusinessException (delegated to GusErrorHandler)
+      const errorResponse = this.errorHandler.handleSoapError(
+        error,
+        correlationId,
+        'classification',
+      );
+
+      // Clear session if error indicates session expiration
+      if (this.errorHandler.isSessionExpiredError(errorResponse)) {
+        this.sessionManager.clearSession();
+      }
+
       throw new BusinessException(errorResponse);
     }
   }
 
   /**
    * Get detailed company report based on REGON and entity type
+   *
+   * Refactored to delegate responsibilities:
+   * - Session management → GusSessionManager
+   * - Rate limiting → GusRateLimiterService
+   * - XML extraction → GusResponseParser.extractSoapResult()
+   * - XML parsing → GusResponseParser.parseXmlResponse()
+   * - Validation → GusResponseValidator.validateLegalPersonReport() / validatePhysicalPersonReport()
+   * - Error handling → GusErrorHandler.handleSoapError()
    */
   async getDetailedReport(
     regon: string,
@@ -304,10 +233,10 @@ export class GusService {
     );
 
     try {
-      // Get active session (will be created if expired)
+      // 1. Session management
       const session = await this.sessionManager.getSession(correlationId);
 
-      // Validate and normalize REGON
+      // 2. Validate and normalize REGON
       const cleanRegon = regon.replace(/\s+/g, '').trim();
       if (!/^\d{9}(\d{5})?$/.test(cleanRegon)) {
         throw new BusinessException(
@@ -322,8 +251,7 @@ export class GusService {
 
       const reportName = this.getReportNameBySilosId(silosId, correlationId);
 
-      // Rate limiting: Ensure we don't exceed GUS API rate limits
-      // Uses Bottleneck token bucket algorithm to queue concurrent requests
+      // 3. Rate limiting
       await this.rateLimiter.schedule(() => Promise.resolve());
 
       this.logger.log('Calling DanePobierzPelnyRaport operation', {
@@ -332,7 +260,7 @@ export class GusService {
         correlationId,
       });
 
-      // Call DanePobierzPelnyRaport using facade (headers automatically injected)
+      // 4. Execute SOAP operation
       const { result } = await session.soapClient
         .danePobierzPelnyRaport(cleanRegon, reportName)
         .catch((err: Error) => {
@@ -360,20 +288,16 @@ export class GusService {
         correlationId,
       });
 
-      // Extract XML data from SOAP result using case-insensitive helper
-      // Handles strong-soap's inconsistent XML parsing (PascalCase vs lowercase)
-      const xmlData = extractSoapResult(result, 'DanePobierzPelnyRaport');
+      // 5. Parse response (delegated to GusResponseParser)
+      const xmlData = this.parser.extractSoapResult(result, 'DanePobierzPelnyRaport');
 
       this.logger.log(`Extracted detailed report data for REGON ${regon}`, {
         xmlDataLength: xmlData ? xmlData.length : 0,
         correlationId,
       });
 
-      if (
-        !xmlData ||
-        xmlData.trim() === '<root></root>' ||
-        xmlData.trim() === ''
-      ) {
+      // Check if empty (common pattern for "not found")
+      if (this.parser.isEmptyXmlData(xmlData)) {
         const errorResponse = createErrorResponse({
           errorCode: 'ENTITY_NOT_FOUND',
           message: `No detailed data found for REGON: ${regon}`,
@@ -383,59 +307,23 @@ export class GusService {
         throw new BusinessException(errorResponse);
       }
 
-      const parsedData = await this.parseXmlResponse(xmlData, correlationId);
+      const parsedData = await this.parser.parseXmlResponse(xmlData, correlationId);
 
-      // Validate based on expected schema using safeParse
+      // 6. Validate based on expected schema (delegated to GusResponseValidator)
       if (silosId === '6') {
-        const validation = GusLegalPersonReportSchema.safeParse(parsedData);
-        if (!validation.success) {
-          this.logger.error(`GUS legal person report failed schema validation`, {
-            correlationId,
-            regon,
-            silosId,
-            zodErrors: validation.error.issues,
-            dataPreview: JSON.stringify(parsedData).substring(0, 500),
-          });
-
-          const errorResponse = createErrorResponse({
-            errorCode: 'GUS_VALIDATION_FAILED',
-            message: 'GUS legal person report failed schema validation',
-            correlationId,
-            source: 'GUS',
-            details: {
-              zodErrors: validation.error.issues,
-              regon,
-              silosId,
-            },
-          });
-          throw new BusinessException(errorResponse);
-        }
-        return validation.data;
+        return this.validator.validateLegalPersonReport(
+          parsedData,
+          correlationId,
+          regon,
+          silosId,
+        );
       } else if (silosId === '1') {
-        const validation = GusPhysicalPersonReportSchema.safeParse(parsedData);
-        if (!validation.success) {
-          this.logger.error(`GUS physical person report failed schema validation`, {
-            correlationId,
-            regon,
-            silosId,
-            zodErrors: validation.error.issues,
-            dataPreview: JSON.stringify(parsedData).substring(0, 500),
-          });
-
-          const errorResponse = createErrorResponse({
-            errorCode: 'GUS_VALIDATION_FAILED',
-            message: 'GUS physical person report failed schema validation',
-            correlationId,
-            source: 'GUS',
-            details: {
-              zodErrors: validation.error.issues,
-              regon,
-              silosId,
-            },
-          });
-          throw new BusinessException(errorResponse);
-        }
-        return validation.data;
+        return this.validator.validatePhysicalPersonReport(
+          parsedData,
+          correlationId,
+          regon,
+          silosId,
+        );
       } else {
         throw new BusinessException(
           createErrorResponse({
@@ -464,8 +352,18 @@ export class GusService {
         throw error;
       }
 
-      // Convert other errors to BusinessException
-      const errorResponse = this.handleGusError(error, correlationId, 'detailed_report');
+      // Convert other errors to BusinessException (delegated to GusErrorHandler)
+      const errorResponse = this.errorHandler.handleSoapError(
+        error,
+        correlationId,
+        'detailed_report',
+      );
+
+      // Clear session if error indicates session expiration
+      if (this.errorHandler.isSessionExpiredError(errorResponse)) {
+        this.sessionManager.clearSession();
+      }
+
       throw new BusinessException(errorResponse);
     }
   }
@@ -503,180 +401,6 @@ export class GusService {
     return reportName;
   }
 
-  /**
-   * Parse XML response to JavaScript object (inner XML data from GUS)
-   */
-  private async parseXmlResponse(xmlString: string, correlationId?: string): Promise<any> {
-    try {
-      const parsed = await parseStringPromise(xmlString, {
-        explicitArray: false,
-        tagNameProcessors: [stripPrefix],
-        attrNameProcessors: [stripPrefix],
-        normalize: true,
-        trim: true,
-      });
-
-      // Extract data from root.dane[0] structure (GUS specific format)
-      const data = parsed?.root?.dane;
-      if (!data) {
-        throw new BusinessException({
-          errorCode: 'GUS_SERVICE_UNAVAILABLE',
-          message: 'GUS API error: Invalid XML structure - missing root.dane',
-          correlationId: correlationId || `gus-${Date.now()}`,
-          source: 'GUS',
-        });
-      }
-
-      // If dane is an array, take the first element; otherwise use it directly
-      return Array.isArray(data) ? data[0] : data;
-    } catch (error) {
-      this.logger.error('Failed to parse GUS XML response', {
-        error: error instanceof Error ? error.message : String(error),
-        xmlLength: xmlString.length,
-        xmlSnippet: xmlString.substring(0, 200),
-      });
-      throw new Error(
-        `Failed to parse GUS XML response: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-
-  /**
-   * Handle GUS-specific errors and convert to standardized ErrorResponse
-   */
-  private handleGusError(
-    error: any,
-    correlationId: string,
-    operation: string,
-  ): ErrorResponse {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-
-    // SOAP fault handling
-    if (error.fault || error.faultstring) {
-      return createErrorResponse({
-        errorCode: 'GUS_SOAP_FAULT',
-        message: error.faultstring || error.fault || 'SOAP fault occurred',
-        correlationId,
-        source: 'GUS',
-        details: {
-          operation,
-          fault: error.fault,
-          faultstring: error.faultstring,
-        },
-      });
-    }
-
-    // Handle XML deserialization errors from GUS (common with bad XML formatting)
-    if (
-      errorMessage.includes('DeserializationFailed') ||
-      errorMessage.includes('Error in line') ||
-      errorMessage.includes('Expecting state') ||
-      errorMessage.includes("Encountered 'CDATA'") ||
-      errorMessage.includes("Encountered 'Text'")
-    ) {
-      return createErrorResponse({
-        errorCode: 'GUS_SOAP_FAULT',
-        message: 'GUS API rejected XML request due to formatting issues',
-        correlationId,
-        source: 'GUS',
-        details: {
-          operation,
-          originalError: errorMessage,
-          hint: 'Check XML element formatting and CDATA usage',
-        },
-      });
-    }
-
-    // GUS API-specific error codes (from BIR documentation)
-    // Error codes 1, 2, 7 indicate session problems
-    if (
-      errorMessage.includes('Błąd') ||
-      errorMessage.includes('Error') ||
-      errorMessage.includes('kod=1') || // Błąd ogólny
-      errorMessage.includes('kod=2') || // Brak sesji lub sesja wygasła
-      errorMessage.includes('kod=7') // Nieprawidłowy identyfikator sesji
-    ) {
-      // Clear invalid session
-      this.sessionManager.clearSession();
-
-      return createErrorResponse({
-        errorCode: 'GUS_SESSION_EXPIRED',
-        message: 'GUS session has expired or is invalid',
-        correlationId,
-        source: 'GUS',
-        details: { operation, originalError: errorMessage },
-      });
-    }
-
-    // HTTP 401 Unauthorized - session problems
-    if (error.response?.status === 401 || errorMessage.includes('401')) {
-      this.sessionManager.clearSession();
-
-      return createErrorResponse({
-        errorCode: 'GUS_SESSION_EXPIRED',
-        message: 'GUS session unauthorized',
-        correlationId,
-        source: 'GUS',
-        details: { operation, originalError: errorMessage },
-      });
-    }
-
-    // Timeout errors
-    if (
-      errorMessage.includes('timed out') ||
-      errorMessage.includes('timeout')
-    ) {
-      return createErrorResponse({
-        errorCode: 'TIMEOUT_ERROR',
-        message: `GUS ${operation} operation timed out`,
-        correlationId,
-        source: 'GUS',
-        details: { operation, originalError: errorMessage },
-      });
-    }
-
-    // Network/connection errors
-    if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
-      return createErrorResponse({
-        errorCode: 'GUS_SERVICE_UNAVAILABLE',
-        message: 'Cannot connect to GUS service',
-        correlationId,
-        source: 'GUS',
-        details: {
-          operation,
-          errorCode: error.code,
-          originalError: errorMessage,
-        },
-      });
-    }
-
-    // Generic session expiration patterns
-    if (
-      errorMessage.includes('session') ||
-      errorMessage.includes('unauthorized') ||
-      errorMessage.includes('sid')
-    ) {
-      // Clear invalid session
-      this.sessionManager.clearSession();
-
-      return createErrorResponse({
-        errorCode: 'GUS_SESSION_EXPIRED',
-        message: 'GUS session has expired',
-        correlationId,
-        source: 'GUS',
-        details: { operation, originalError: errorMessage },
-      });
-    }
-
-    // Generic GUS service error
-    return createErrorResponse({
-      errorCode: 'GUS_SERVICE_UNAVAILABLE',
-      message: `GUS service error during ${operation}`,
-      correlationId,
-      source: 'GUS',
-      details: { operation, originalError: errorMessage },
-    });
-  }
 
   /**
    * Health check for GUS SOAP API

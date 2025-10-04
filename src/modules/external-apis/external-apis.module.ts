@@ -2,6 +2,9 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { GusService } from './gus/gus.service';
 import { GusRateLimiterService } from './gus/gus-rate-limiter.service';
+import { GusResponseParser } from './gus/parsers/gus-response.parser';
+import { GusResponseValidator } from './gus/validators/gus-response.validator';
+import { GusErrorHandler } from './gus/handlers/gus-error.handler';
 import { KrsService } from './krs/krs.service';
 import { CeidgV3Service } from './ceidg/ceidg-v3.service';
 
@@ -12,6 +15,12 @@ import { CeidgV3Service } from './ceidg/ceidg-v3.service';
  * - GUS (Polish Statistical Office) SOAP service
  * - KRS (Court Register) REST service
  * - CEIDG (Individual Entrepreneurs Registry) REST service
+ *
+ * GUS Service follows Single Responsibility Principle:
+ * - GusResponseParser: XML parsing and extraction
+ * - GusResponseValidator: Zod schema validation
+ * - GusErrorHandler: Error conversion to ErrorResponse
+ * - GusService: Orchestration facade
  *
  * All services are configured with:
  * - Retry logic and error handling
@@ -25,7 +34,17 @@ import { CeidgV3Service } from './ceidg/ceidg-v3.service';
 
 @Module({
   imports: [ConfigModule],
-  providers: [GusService, GusRateLimiterService, KrsService, CeidgV3Service],
+  providers: [
+    // GUS service and dependencies (SRP refactoring)
+    GusResponseParser,
+    GusResponseValidator,
+    GusErrorHandler,
+    GusService,
+    GusRateLimiterService,
+    // Other external API services
+    KrsService,
+    CeidgV3Service,
+  ],
   exports: [GusService, KrsService, CeidgV3Service],
 })
 export class ExternalApisModule {}

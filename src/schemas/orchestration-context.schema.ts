@@ -5,7 +5,7 @@ import {
   GusClassificationResponseSchema,
   GusLegalPersonReportSchema,
   GusPhysicalPersonReportSchema,
-} from '../modules/external-apis/gus/gus.service';
+} from '../modules/external-apis/gus/validators/gus-response.validator';
 import { KrsResponseSchema } from '../modules/external-apis/krs/krs.service';
 import { CeidgCompanySchema } from '../modules/external-apis/ceidg/ceidg-v3.service';
 
