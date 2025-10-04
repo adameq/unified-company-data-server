@@ -16,7 +16,7 @@ describe('NIP Validation', () => {
     // Using known valid NIPs that pass checksum validation
     const validNips = [
       '5260001246', // Known valid NIP
-      '1234567890', // Valid calculated NIP
+      '7123426183', // TheSpace company NIP (real production NIP)
     ];
 
     // First let's test one by one to verify which ones actually work
