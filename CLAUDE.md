@@ -231,7 +231,7 @@ APP_SWAGGER_SERVER_URL_PRODUCTION=https://api.example.com
 
 ### CORS Security Configuration
 
-**IMPORTANT**: CORS configuration has security implications when combined with `credentials: true`.
+**IMPORTANT**: CORS configuration has security implications. The application enforces safe CORS practices automatically.
 
 #### Development Setup (Recommended)
 
@@ -246,18 +246,28 @@ APP_CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173,http://127.
 - ✅ Tests real CORS behavior (catches issues early)
 - ✅ No CSRF vulnerability
 - ✅ Can be committed to git safely
-- ✅ Works with `credentials: true`
+- ✅ Works with `credentials: true` (allows cookies and Authorization headers)
 
-#### Wildcard Configuration (NOT RECOMMENDED)
+#### Wildcard Configuration (LIMITED USE)
 
-For **quick local testing only**, you can use wildcard (but this is discouraged):
+For **quick local testing only** when you don't need credentials:
 
 ```bash
-# .env (NOT RECOMMENDED - only for quick testing)
+# .env (for testing without authentication)
 APP_CORS_ALLOWED_ORIGINS=*
 ```
 
-**Security Risk**: Wildcard `*` combined with `credentials: true` creates **CSRF vulnerability**. The application logs a warning when this configuration is detected.
+**Automatic Security Enforcement**:
+- ⚠️ Application **automatically sets** `credentials: false` when `origin: '*'`
+- ⚠️ This prevents CSRF vulnerability per CORS specification
+- ⚠️ Cookies and Authorization headers **will NOT be sent**
+- ⚠️ Warning logged at startup
+
+**Technical Details**:
+- CORS spec **prohibits** `Access-Control-Allow-Origin: *` with `Access-Control-Allow-Credentials: true`
+- Browsers reject this combination to prevent CSRF attacks
+- Application enforces this at code level: `credentials: !allowAllOrigins`
+- See: [MDN CORS Credentialed Requests](https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS#credentialed_requests_and_wildcards)
 
 #### Production Configuration (REQUIRED)
 

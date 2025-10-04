@@ -24,21 +24,24 @@ async function bootstrap() {
 
   app.enableCors({
     // Native cors library handles origin validation:
-    // - true: allows all origins (when APP_CORS_ALLOWED_ORIGINS="*")
+    // - '*': allows all origins but MUST have credentials: false (security requirement)
     // - string[]: whitelist validation with automatic rejection
     // - Automatically allows requests with no origin (mobile apps, Postman, server-to-server)
-    origin: allowAllOrigins ? true : allowedOrigins,
+    origin: allowAllOrigins ? '*' : allowedOrigins,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
-    credentials: true,
+    // Security: credentials MUST be false when origin is '*' to prevent CSRF attacks
+    // See: https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS#credentialed_requests_and_wildcards
+    credentials: !allowAllOrigins,
   });
 
-  // Security warning for wildcard CORS with credentials
+  // Security warning for wildcard CORS
   if (allowAllOrigins) {
     logger.warn(
-      '⚠️  SECURITY WARNING: CORS configured to allow all origins (origin: true)\n' +
-        '   This combined with credentials: true creates CSRF vulnerability.\n' +
-        '   Only use this in development. For production, set APP_CORS_ALLOWED_ORIGINS to specific domains.',
+      '⚠️  SECURITY WARNING: CORS configured to allow all origins (origin: "*")\n' +
+        '   credentials automatically set to false (required by CORS spec)\n' +
+        '   This means cookies and Authorization headers will NOT be sent.\n' +
+        '   For production, set APP_CORS_ALLOWED_ORIGINS to specific domains.',
     );
   }
 
