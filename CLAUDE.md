@@ -312,7 +312,8 @@ The application uses a **centralized retry strategy** via XState machines with a
 
 #### Exponential Backoff
 - Formula: `delay = initialDelay * 2^attempt + jitter`
-- Jitter: ±10% random variation
+- Jitter: ±10% symmetric random variation (prevents thundering herd)
+- Implementation: `(Math.random() - 0.5) * 0.2 * exponentialDelay`
 - Max delay: 5000ms
 - Managed automatically by `retry.machine.ts`
 

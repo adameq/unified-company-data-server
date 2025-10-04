@@ -103,7 +103,7 @@ export const calculateBackoffDelay = (
   maxDelay = 5000,
 ): number => {
   const exponentialDelay = initialDelay * Math.pow(2, attempt);
-  const jitter = Math.random() * 0.1 * exponentialDelay; // 10% jitter
+  const jitter = (Math.random() - 0.5) * 0.2 * exponentialDelay; // ±10% jitter
   const delay = Math.min(exponentialDelay + jitter, maxDelay);
   return Math.round(delay);
 };
