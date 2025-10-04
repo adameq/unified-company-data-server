@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { createActor, fromPromise, toPromise, type AnyActorRef } from 'xstate';
 import { z } from 'zod';
 import { UnifiedCompanyDataSchema } from '@schemas/unified-company-data.schema';
-import { ErrorResponseSchema, type ErrorResponse } from '@schemas/error-response.schema';
+import type { ErrorResponse } from '@schemas/error-response.schema';
 import { GusService } from '@modules/external-apis/gus/gus.service';
 import { KrsService } from '@modules/external-apis/krs/krs.service';
 import { CeidgV3Service } from '@modules/external-apis/ceidg/ceidg-v3.service';
@@ -322,20 +322,29 @@ export class OrchestrationService implements OnModuleInit {
   /**
    * Check if error has ErrorResponse structure (from XState)
    *
-   * Uses Zod schema validation for type-safe error detection.
-   * This ensures complete validation including:
-   * - All required fields (errorCode, message, correlationId, timestamp)
-   * - Correct types for each field
-   * - ErrorCode enum validation (from predefined ERROR_CODES)
-   * - Refine rules (errorCode prefix matching source)
+   * Uses lightweight duck typing for performance-critical error detection.
+   * Checks only essential fields that uniquely identify ErrorResponse:
+   * - errorCode: string (required, unique to errors)
+   * - correlationId: string (required, unique to errors)
    *
-   * Benefits over duck typing:
-   * - No false positives from objects with similar fields
-   * - Automatically follows schema changes
-   * - Type-safe and maintainable
+   * Why duck typing over Zod safeParse():
+   * - 10-100x faster (simple property checks vs full schema validation)
+   * - Called in hot path (every state machine completion)
+   * - ErrorResponse objects are controlled internally (machine failure states)
+   * - No risk of false positives (UnifiedCompanyData has 'nip', not 'errorCode')
+   *
+   * Trade-offs:
+   * - Won't catch malformed ErrorResponse objects (missing timestamp, wrong types)
+   * - BUT: failure states guarantee valid ErrorResponse via convertLastErrorToErrorResponse()
+   * - Schema validation happens at system boundaries, not internal orchestration
    */
   private isErrorResponse(error: unknown): error is ErrorResponse {
-    return ErrorResponseSchema.safeParse(error).success;
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'errorCode' in error &&
+      'correlationId' in error
+    );
   }
 
   /**
