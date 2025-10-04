@@ -83,7 +83,6 @@ describe('EnvironmentSchema', () => {
       expect(result.APP_REQUEST_TIMEOUT).toBe(15000);
       expect(result.APP_EXTERNAL_API_TIMEOUT).toBe(5000);
       expect(result.APP_RATE_LIMIT_PER_MINUTE).toBe(100);
-      expect(result.APP_LOG_LEVEL).toBe('info');
       expect(result.GUS_MAX_RETRIES).toBe(2);
       expect(result.KRS_MAX_RETRIES).toBe(2);
       expect(result.CEIDG_MAX_RETRIES).toBe(2);

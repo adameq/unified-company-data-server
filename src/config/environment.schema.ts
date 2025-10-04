@@ -40,10 +40,6 @@ export const EnvironmentSchema = z
     // Application-level Rate Limiting (incoming requests)
     APP_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(1000).default(100),
 
-    // Application-level Logging Configuration
-    APP_LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
-    APP_LOG_FORMAT: z.enum(['json', 'pretty']).default('pretty'),
-
     // External API Base URLs
     // WARNING: Development defaults provided for convenience.
     // Production deployments MUST explicitly set these environment variables

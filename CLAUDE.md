@@ -30,7 +30,7 @@ The project is a production-ready microservice with complete external API integr
 - **SOAP Client**: strong-soap v5.0.2 for GUS API integration
 - **Validation**: Zod schemas for all data boundaries
 - **Testing**: Jest with supertest for integration tests
-- **Logging**: Structured logging (console for development)
+- **Logging**: NestJS built-in Logger (console output)
 - **Documentation**: Swagger/OpenAPI integration
 
 ### Project Structure
@@ -177,7 +177,7 @@ Retrieve unified company data by NIP number.
 
 Application-level configuration uses `APP_*` prefix to distinguish from service-specific variables:
 
-- **Application-level** (server, auth, CORS, logging): `APP_*` prefix
+- **Application-level** (server, auth, CORS, security): `APP_*` prefix
 - **Service integrations** (GUS, KRS, CEIDG): Service-specific prefix (`GUS_*`, `KRS_*`, `CEIDG_*`)
 
 ### Required Environment Variables
@@ -212,10 +212,6 @@ CEIDG_INITIAL_DELAY=150             # Initial delay for CEIDG retries
 
 # Service-specific Rate Limiting
 GUS_MAX_REQUESTS_PER_SECOND=10      # Max requests/second for GUS API (token bucket)
-
-# Application-level Logging
-APP_LOG_LEVEL=debug                 # Log level: error, warn, info, debug
-APP_LOG_FORMAT=pretty               # Format: json, pretty
 
 # Application-level CORS Configuration
 APP_CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
@@ -770,19 +766,18 @@ Comprehensive error handling with:
 
 ## Next Development Steps
 
-1. **Production Features**:
-   - API key authentication middleware
-   - Rate limiting
-   - Structured logging with Pino
-   - Health check endpoints
-   - Swagger documentation
+1. **Production Features** (mostly completed):
+   - ✅ API key authentication middleware
+   - ✅ Rate limiting
+   - ✅ Health check endpoints
+   - ✅ Swagger documentation
 
-4. **Comprehensive Testing**:
+2. **Comprehensive Testing**:
    - Enable contract tests with real API stubs
    - Add unit tests for all components
    - Performance testing under load
 
-5. **Deployment**:
+3. **Deployment**:
    - CI/CD pipeline
    - Environment-specific configurations
 
