@@ -142,17 +142,21 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     if (exception instanceof HttpException && exception.getStatus() === 400) {
       const response = exception.getResponse();
 
-      // Check if response contains "Unexpected token" or similar JSON parsing errors
+      // Check if response contains JSON parsing error patterns
       // These are characteristic of body-parser SyntaxError messages
       const message = typeof response === 'string' ? response : (response as any)?.message || '';
       const messageStr = Array.isArray(message) ? message.join(' ') : String(message);
       const messageLower = messageStr.toLowerCase();
 
       // Body-parser specific error patterns (stable across versions)
+      // Express 5.x body-parser patterns:
       return (
-        messageLower.includes('unexpected token') || // "Unexpected token X in JSON at position Y"
-        messageLower.includes('invalid json') ||      // Some versions use this
-        (messageLower.includes('json') && messageLower.includes('parse')) // Generic JSON parse errors
+        messageLower.includes('unexpected token') ||    // "Unexpected token X in JSON at position Y"
+        messageLower.includes('invalid json') ||        // Some versions use this
+        messageLower.includes('expected') ||            // "Expected ',' or '}' after property value" (Express 5.x)
+        messageLower.includes('in json at position') || // Common pattern in all JSON parse errors
+        (messageLower.includes('json') && messageLower.includes('parse')) || // Generic JSON parse errors
+        (messageLower.includes('json') && messageLower.includes('position')) // Position-based errors
       );
     }
 
