@@ -999,7 +999,7 @@ This project uses **path aliases** for cleaner, more maintainable imports.
 // tsconfig.json paths configuration
 "paths": {
   "@/*": ["src/*"],              // Root src directory
-  "@common/*": ["src/common/*"],  // Common utilities, exceptions, validators
+  "@common/*": ["src/modules/common/*"],  // Common utilities, exceptions, validators
   "@config/*": ["src/config/*"],  // Configuration files
   "@schemas/*": ["src/schemas/*"], // Zod schemas
   "@modules/*": ["src/modules/*"], // NestJS modules
@@ -1037,7 +1037,7 @@ Tests automatically support path aliases via `moduleNameMapper` in `package.json
 ```json
 "moduleNameMapper": {
   "^@/(.*)$": "<rootDir>/src/$1",
-  "^@common/(.*)$": "<rootDir>/src/common/$1",
+  "^@common/(.*)$": "<rootDir>/src/modules/common/$1",
   "^@config/(.*)$": "<rootDir>/src/config/$1",
   "^@schemas/(.*)$": "<rootDir>/src/schemas/$1",
   "^@modules/(.*)$": "<rootDir>/src/modules/$1",
