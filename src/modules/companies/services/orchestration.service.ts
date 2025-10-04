@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { createActor, fromPromise, toPromise, type AnyActorRef } from 'xstate';
 import { z } from 'zod';
 import { UnifiedCompanyDataSchema } from '@schemas/unified-company-data.schema';
-import { type ErrorResponse } from '@schemas/error-response.schema';
+import { ErrorResponseSchema, type ErrorResponse } from '@schemas/error-response.schema';
 import { GusService } from '@modules/external-apis/gus/gus.service';
 import { KrsService } from '@modules/external-apis/krs/krs.service';
 import { CeidgV3Service } from '@modules/external-apis/ceidg/ceidg-v3.service';
@@ -319,15 +319,21 @@ export class OrchestrationService implements OnModuleInit {
 
   /**
    * Check if error has ErrorResponse structure (from XState)
+   *
+   * Uses Zod schema validation for type-safe error detection.
+   * This ensures complete validation including:
+   * - All required fields (errorCode, message, correlationId, timestamp)
+   * - Correct types for each field
+   * - ErrorCode enum validation (from predefined ERROR_CODES)
+   * - Refine rules (errorCode prefix matching source)
+   *
+   * Benefits over duck typing:
+   * - No false positives from objects with similar fields
+   * - Automatically follows schema changes
+   * - Type-safe and maintainable
    */
   private isErrorResponse(error: unknown): error is ErrorResponse {
-    return (
-      typeof error === 'object' &&
-      error !== null &&
-      'errorCode' in error &&
-      'message' in error &&
-      'correlationId' in error
-    );
+    return ErrorResponseSchema.safeParse(error).success;
   }
 
   /**
