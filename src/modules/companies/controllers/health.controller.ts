@@ -1,5 +1,10 @@
 import { Controller, Get, Logger } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import {
+  HealthCheckService,
+  MemoryHealthIndicator,
+  HealthCheck,
+} from '@nestjs/terminus';
 import { OrchestrationService } from '../services/orchestration.service';
 import { Public } from '@modules/common/decorators/public.decorator';
 
@@ -40,6 +45,8 @@ export class HealthController {
 
   constructor(
     private readonly orchestrationService: OrchestrationService,
+    private readonly health: HealthCheckService,
+    private readonly memory: MemoryHealthIndicator,
   ) {}
 
   @Public()
@@ -157,9 +164,11 @@ export class HealthController {
 
   @Public()
   @Get('metrics')
+  @HealthCheck()
   @ApiOperation({
-    summary: 'Basic application metrics',
-    description: 'Returns basic performance and usage metrics',
+    summary: 'Application metrics with Terminus health indicators',
+    description:
+      'Returns standardized health metrics using @nestjs/terminus (memory, disk, etc.)',
   })
   @ApiResponse({
     status: 200,
@@ -167,18 +176,38 @@ export class HealthController {
     schema: {
       type: 'object',
       properties: {
-        uptime: { type: 'number', description: 'Uptime in seconds' },
-        memory: {
+        status: {
+          type: 'string',
+          enum: ['ok', 'error'],
+          description: 'Overall health status',
+        },
+        info: {
           type: 'object',
+          description: 'Health indicators that are up',
+        },
+        error: {
+          type: 'object',
+          description: 'Health indicators that are down',
+        },
+        details: {
+          type: 'object',
+          description: 'Detailed health indicator data',
           properties: {
-            used: { type: 'number', description: 'Used memory in bytes' },
-            total: { type: 'number', description: 'Total memory in bytes' },
-            percentage: {
-              type: 'number',
-              description: 'Memory usage percentage',
+            memory_heap: {
+              type: 'object',
+              properties: {
+                status: { type: 'string' },
+              },
+            },
+            memory_rss: {
+              type: 'object',
+              properties: {
+                status: { type: 'string' },
+              },
             },
           },
         },
+        uptime: { type: 'number', description: 'Uptime in seconds' },
         process: {
           type: 'object',
           properties: {
@@ -189,19 +218,21 @@ export class HealthController {
       },
     },
   })
-  getMetrics() {
-    const memoryUsage = process.memoryUsage();
+  async getMetrics() {
     const uptime = Date.now() - this.startTime;
 
+    // Use Terminus MemoryHealthIndicator for standardized memory checks
+    const healthCheckResult = await this.health.check([
+      // Heap memory: 512 MB threshold (typical for Node.js applications)
+      () => this.memory.checkHeap('memory_heap', 512 * 1024 * 1024),
+      // RSS memory: 1 GB threshold (total process memory)
+      () => this.memory.checkRSS('memory_rss', 1024 * 1024 * 1024),
+    ]);
+
+    // Add additional metadata not provided by Terminus
     return {
+      ...healthCheckResult,
       uptime: Math.floor(uptime / 1000),
-      memory: {
-        used: memoryUsage.heapUsed,
-        total: memoryUsage.heapTotal,
-        percentage: Math.round(
-          (memoryUsage.heapUsed / memoryUsage.heapTotal) * 100,
-        ),
-      },
       process: {
         pid: process.pid,
         nodeVersion: process.version,

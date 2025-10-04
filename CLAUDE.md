@@ -31,6 +31,7 @@ The project is a production-ready microservice with complete external API integr
 - **Validation**: Zod schemas for all data boundaries
 - **Testing**: Jest with supertest for integration tests
 - **Logging**: NestJS built-in Logger (console output)
+- **Health Checks**: @nestjs/terminus (MemoryHealthIndicator, extensible for disk/database)
 - **Documentation**: Swagger/OpenAPI integration
 
 ### Project Structure
@@ -116,7 +117,9 @@ pnpm format
 
 ## API Endpoints
 
-### POST /api/companies
+### Company Data Endpoints
+
+#### POST /api/companies
 
 Retrieve unified company data by NIP number.
 
@@ -169,6 +172,116 @@ Retrieve unified company data by NIP number.
   "source": "INTERNAL",
   "timestamp": "2025-09-26T20:14:52.756Z"
 }
+```
+
+### Health Check Endpoints
+
+Health endpoints use **@nestjs/terminus** for standardized health indicators.
+
+#### GET /api/health
+
+Basic health check without external dependencies.
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "timestamp": "2025-10-04T15:10:00.000Z",
+  "uptime": 3600,
+  "version": "0.0.1",
+  "environment": "development"
+}
+```
+
+#### GET /api/health/live
+
+Liveness probe for Kubernetes/container orchestration.
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "timestamp": "2025-10-04T15:10:00.000Z"
+}
+```
+
+#### GET /api/health/ready
+
+Readiness check including external service health (GUS, KRS, CEIDG).
+
+**Response (healthy):**
+```json
+{
+  "status": "healthy",
+  "timestamp": "2025-10-04T15:10:00.000Z",
+  "uptime": 3600,
+  "version": "0.0.1",
+  "environment": "development",
+  "services": {
+    "gus": "operational",
+    "krs": "operational",
+    "ceidg": "operational"
+  },
+  "dependencies": {
+    "gus": "operational",
+    "krs": "operational",
+    "ceidg": "operational"
+  }
+}
+```
+
+#### GET /api/health/metrics
+
+Application metrics using Terminus health indicators.
+
+**Features:**
+- **MemoryHealthIndicator**: Heap and RSS memory monitoring
+- **Extensible**: Easy to add DiskHealthIndicator, DatabaseHealthIndicator, etc.
+- **Standardized format**: Industry-standard health check response
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "info": {
+    "memory_heap": {
+      "status": "up"
+    },
+    "memory_rss": {
+      "status": "up"
+    }
+  },
+  "error": {},
+  "details": {
+    "memory_heap": {
+      "status": "up"
+    },
+    "memory_rss": {
+      "status": "up"
+    }
+  },
+  "uptime": 3600,
+  "process": {
+    "pid": 12345,
+    "nodeVersion": "v18.20.0"
+  },
+  "timestamp": "2025-10-04T15:10:00.000Z"
+}
+```
+
+**Thresholds:**
+- Heap memory: 512 MB (typical Node.js application)
+- RSS memory: 1 GB (total process memory)
+
+**Future Extensions:**
+```typescript
+// Easy to add more health indicators:
+await this.health.check([
+  () => this.memory.checkHeap('memory_heap', 512 * 1024 * 1024),
+  () => this.memory.checkRSS('memory_rss', 1024 * 1024 * 1024),
+  () => this.disk.checkStorage('disk', { path: '/', threshold: 0.9 }), // Disk usage
+  () => this.database.pingCheck('database', { timeout: 1000 }), // Database health
+]);
 ```
 
 ## Environment Configuration
@@ -610,10 +723,10 @@ Referrer-Policy: no-referrer
 
 **Public Endpoints** (no authentication required):
 - `GET /` - Root endpoint
-- `GET /api/health/live` - Liveness check
-- `GET /api/health/ready` - Readiness check
-- `GET /api/health/startup` - Startup check
-- `GET /api/health` - General health check
+- `GET /api/health` - Basic health check
+- `GET /api/health/live` - Liveness check (Kubernetes probe)
+- `GET /api/health/ready` - Readiness check (external service dependencies)
+- `GET /api/health/metrics` - Application metrics with Terminus health indicators
 
 **Testing API Key Authentication**:
 ```bash
@@ -779,7 +892,7 @@ Comprehensive error handling with:
 1. **Production Features** (mostly completed):
    - ✅ API key authentication middleware
    - ✅ Rate limiting
-   - ✅ Health check endpoints
+   - ✅ Health check endpoints with @nestjs/terminus (standardized health indicators)
    - ✅ Swagger documentation
 
 2. **Comprehensive Testing**:

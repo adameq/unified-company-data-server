@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { TerminusModule } from '@nestjs/terminus';
 import { CompaniesController } from './controllers/companies.controller';
 import { HealthController } from './controllers/health.controller';
 import { OrchestrationService } from './services/orchestration.service';
@@ -35,6 +36,7 @@ import { OrchestrationMachineProvider } from './state-machines/orchestration/orc
 @Module({
   imports: [
     ExternalApisModule, // Import external API services
+    TerminusModule, // Health check indicators (Memory, Disk, etc.)
   ],
   controllers: [
     CompaniesController,
