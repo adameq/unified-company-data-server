@@ -1,5 +1,16 @@
 import { z } from 'zod';
 
+/**
+ * Hardcoded default values for production validation
+ *
+ * These constants are used in .superRefine() to detect when production
+ * environments are using default URLs instead of explicit configuration.
+ */
+const DEFAULT_GUS_BASE_URL = 'https://wyszukiwarkaregon.stat.gov.pl/wsBIR/UslugaBIRzewnPubl.svc';
+const DEFAULT_GUS_WSDL_URL = 'https://wyszukiwarkaregon.stat.gov.pl/wsBIR/wsdl/UslugaBIRzewnPubl-ver11-prod.wsdl';
+const DEFAULT_KRS_BASE_URL = 'https://api-krs.ms.gov.pl';
+const DEFAULT_CEIDG_BASE_URL = 'https://dane.biznes.gov.pl/api/ceidg/v3';
+
 export const EnvironmentSchema = z
   .object({
     // Server Configuration
@@ -40,24 +51,22 @@ export const EnvironmentSchema = z
     GUS_BASE_URL: z
       .string()
       .url()
-      .default('https://wyszukiwarkaregon.stat.gov.pl/wsBIR/UslugaBIRzewnPubl.svc')
+      .default(DEFAULT_GUS_BASE_URL)
       .describe('GUS SOAP API base URL - MUST be explicitly set in production'),
     GUS_WSDL_URL: z
       .string()
       .url()
-      .default(
-        'https://wyszukiwarkaregon.stat.gov.pl/wsBIR/wsdl/UslugaBIRzewnPubl-ver11-prod.wsdl',
-      )
+      .default(DEFAULT_GUS_WSDL_URL)
       .describe('GUS WSDL definition URL - MUST be explicitly set in production'),
     KRS_BASE_URL: z
       .string()
       .url()
-      .default('https://api-krs.ms.gov.pl')
+      .default(DEFAULT_KRS_BASE_URL)
       .describe('KRS REST API base URL - MUST be explicitly set in production'),
     CEIDG_BASE_URL: z
       .string()
       .url()
-      .default('https://dane.biznes.gov.pl/api/ceidg/v3')
+      .default(DEFAULT_CEIDG_BASE_URL)
       .describe('CEIDG v3 REST API base URL - MUST be explicitly set in production'),
 
     // Retry Configuration per Service
@@ -105,16 +114,17 @@ export const EnvironmentSchema = z
   })
   .superRefine((config, ctx) => {
     // Production safety check: fail fast if using default URLs in production
-    // IMPORTANT: This runs BEFORE .default() is applied, so we check process.env directly
-    // to detect whether user explicitly provided values or Zod will use defaults
+    // NOTE: .superRefine() runs AFTER .default() transformations, so we compare
+    // the resolved config values against hardcoded defaults (not process.env)
     if (config.NODE_ENV === 'production') {
       const usingDefaults: string[] = [];
 
-      // Check raw process.env to detect missing explicit configuration
-      if (!process.env.GUS_BASE_URL) usingDefaults.push('GUS_BASE_URL');
-      if (!process.env.GUS_WSDL_URL) usingDefaults.push('GUS_WSDL_URL');
-      if (!process.env.KRS_BASE_URL) usingDefaults.push('KRS_BASE_URL');
-      if (!process.env.CEIDG_BASE_URL) usingDefaults.push('CEIDG_BASE_URL');
+      // Compare resolved values with hardcoded defaults
+      // This catches both missing env vars AND explicitly set default values
+      if (config.GUS_BASE_URL === DEFAULT_GUS_BASE_URL) usingDefaults.push('GUS_BASE_URL');
+      if (config.GUS_WSDL_URL === DEFAULT_GUS_WSDL_URL) usingDefaults.push('GUS_WSDL_URL');
+      if (config.KRS_BASE_URL === DEFAULT_KRS_BASE_URL) usingDefaults.push('KRS_BASE_URL');
+      if (config.CEIDG_BASE_URL === DEFAULT_CEIDG_BASE_URL) usingDefaults.push('CEIDG_BASE_URL');
 
       if (usingDefaults.length > 0) {
         ctx.addIssue({

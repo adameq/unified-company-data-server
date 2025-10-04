@@ -46,6 +46,27 @@ export const createSoapClient = promisify<string, any, soap.Client>(
  * Handles the common pattern of SOAP operations that return (err, result, envelope, soapHeader).
  * Extracts result and envelope for further processing.
  *
+ * **Why Manual Promise Construction:**
+ * This function uses manual `new Promise(...)` instead of `util.promisify` because:
+ * 1. **Multi-value callbacks**: SOAP operations return multiple values (result, envelope, soapHeader)
+ *    but `util.promisify` only captures the first non-error argument.
+ * 2. **Custom transformation**: We need to transform callback args to `{result, envelope}` object.
+ * 3. **Context binding**: SOAP client methods require `.bind(context)` to preserve `this` context,
+ *    which adds complexity when combined with promisify.
+ *
+ * Using `util.promisify.custom` symbol would still require manual Promise construction internally,
+ * so this direct approach is clearer and more maintainable.
+ *
+ * **Comparison with util.promisify:**
+ * ```typescript
+ * // util.promisify approach (loses envelope):
+ * const promisified = promisify(operation.bind(context));
+ * const result = await promisified(params); // Only gets first callback arg
+ *
+ * // Manual Promise (current approach - preserves all data):
+ * const { result, envelope } = await callSoapOperation(operation, params, context);
+ * ```
+ *
  * @param operation - SOAP client operation method (e.g., client.DaneSzukajPodmioty)
  * @param params - Operation parameters
  * @param context - Optional context object for binding (usually the client)
@@ -68,21 +89,26 @@ export function callSoapOperation<TResult = any>(
   return new Promise((resolve, reject) => {
     const boundOperation = context ? operation.bind(context) : operation;
 
-    boundOperation(
-      params,
-      (
-        err: Error | null,
-        result: TResult,
-        envelope: any,
-        soapHeader?: any,
-      ) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve({ result, envelope });
-        }
-      },
-    );
+    try {
+      boundOperation(
+        params,
+        (
+          err: Error | null,
+          result: TResult,
+          envelope: any,
+          soapHeader?: any,
+        ) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve({ result, envelope });
+          }
+        },
+      );
+    } catch (error) {
+      // Catch synchronous errors (e.g., invalid operation, binding errors)
+      reject(error);
+    }
   });
 }
 
@@ -90,6 +116,27 @@ export function callSoapOperation<TResult = any>(
  * Call a simple SOAP operation that doesn't return result/envelope
  *
  * Used for operations like Zaloguj (returns just sessionId) or Wyloguj (returns void).
+ *
+ * **Why Manual Promise Construction:**
+ * Similar to `callSoapOperation`, this uses manual Promise construction for:
+ * 1. **Consistency**: Matches the pattern used in `callSoapOperation` for easier maintenance.
+ * 2. **Context binding**: Preserves `this` context for SOAP client methods via `.bind(context)`.
+ * 3. **Defensive error handling**: try/catch around operation call prevents unhandled rejections.
+ * 4. **Type safety**: Explicit callback signature with proper TypeScript types.
+ *
+ * While `util.promisify` could technically work here (single return value), keeping manual
+ * Promise construction maintains consistency with `callSoapOperation` and provides the same
+ * defensive error handling benefits.
+ *
+ * **Why not util.promisify:**
+ * ```typescript
+ * // util.promisify approach (works but less consistent):
+ * const promisified = promisify(operation.bind(context));
+ * const result = await promisified(params);
+ *
+ * // Manual Promise (current approach - consistent + defensive):
+ * const result = await callSimpleSoapOperation(operation, params, context);
+ * ```
  *
  * @param operation - SOAP client operation method
  * @param params - Operation parameters
@@ -113,21 +160,26 @@ export function callSimpleSoapOperation<TResult = any>(
   return new Promise((resolve, reject) => {
     const boundOperation = context ? operation.bind(context) : operation;
 
-    boundOperation(
-      params,
-      (
-        err: Error | null,
-        result: TResult,
-        envelope?: any,
-        soapHeader?: any,
-      ) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(result);
-        }
-      },
-    );
+    try {
+      boundOperation(
+        params,
+        (
+          err: Error | null,
+          result: TResult,
+          envelope?: any,
+          soapHeader?: any,
+        ) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(result);
+          }
+        },
+      );
+    } catch (error) {
+      // Catch synchronous errors (e.g., invalid operation, binding errors)
+      reject(error);
+    }
   });
 }
 

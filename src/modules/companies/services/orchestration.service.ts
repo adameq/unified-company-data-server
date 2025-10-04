@@ -14,10 +14,7 @@ import {
   ORCHESTRATION_MACHINE,
   type OrchestrationMachineConfig,
 } from '../state-machines/orchestration/orchestration.provider';
-import {
-  createRetryMachine,
-  type MakeApiRequestInput,
-} from '../state-machines/retry.machine';
+import { createRetryActor } from '../state-machines/retry-actor.factory';
 import { GusRetryStrategy } from '../state-machines/strategies/gus-retry.strategy';
 import { KrsRetryStrategy } from '../state-machines/strategies/krs-retry.strategy';
 import { CeidgRetryStrategy } from '../state-machines/strategies/ceidg-retry.strategy';
@@ -142,192 +139,42 @@ export class OrchestrationService implements OnModuleInit {
   private configureMachine() {
     return this.baseMachine.provide({
       actors: {
-        // GUS Classification with retry logic via state machine
-        retryGusClassification: fromPromise(async ({ input }: { input: { nip: string; correlationId: string } }) => {
-          // correlationId comes from input, not closure
-          const { nip, correlationId } = input;
-
-          const retryMachine = createRetryMachine(
-            this.gusRetryStrategy.name,  // Use strategy name
-            correlationId,
-            this.logger,
-            this.machineConfig.retry.gus, // Use pre-built config
-          ).provide({
-            actors: {
-              // Explicit type annotation resolves XState v5 type inference limitation
-              makeApiRequest: fromPromise<any, MakeApiRequestInput>(async ({ input }) => {
-                const { context: retryContext } = input;
-                const nip = retryContext.nip!; // Non-null assertion: guaranteed by RetryContext schema
-                const correlationId = retryContext.correlationId;
-                return this.gusService.getClassificationByNip(nip, correlationId);
-              }),
-            },
-          });
-
-          const actor = createActor(retryMachine, {
-            input: {
-              nip,
-              correlationId,
-              retryStrategy: this.gusRetryStrategy,  // Inject strategy
-            }
-          });
-          actor.start();
-
-          // Use toPromise() helper (idiomatic XState v5 pattern)
-          await toPromise(actor);
-
-          const snapshot = actor.getSnapshot();
-          if (snapshot.value !== 'success') {
-            throw snapshot.output ||
-              snapshot.context?.lastError ||
-              new Error('GUS retry failed');
-          }
-
-          return snapshot.output ?? snapshot.context?.result;
+        // GUS Classification with retry logic via factory
+        retryGusClassification: createRetryActor({
+          strategyName: this.gusRetryStrategy.name,
+          retryStrategy: this.gusRetryStrategy,
+          retryConfig: this.machineConfig.retry.gus,
+          logger: this.logger,
+          serviceCall: (ctx) => this.gusService.getClassificationByNip(ctx.nip!, ctx.correlationId),
         }),
 
-        // GUS Detailed Data with retry logic via state machine
-        retryGusDetailedData: fromPromise(async ({ input }: { input: { regon: string; silosId: string; correlationId: string } }) => {
-          const { regon, silosId, correlationId } = input;
-
-          const retryMachine = createRetryMachine(
-            this.gusRetryStrategy.name,  // Use strategy name
-            correlationId,
-            this.logger,
-            this.machineConfig.retry.gus,
-          ).provide({
-            actors: {
-              // Explicit type annotation resolves XState v5 type inference limitation
-              makeApiRequest: fromPromise<any, MakeApiRequestInput>(async ({ input }) => {
-                const { context: retryContext } = input;
-                return this.gusService.getDetailedReport(
-                  retryContext.regon!,
-                  retryContext.silosId!,
-                  retryContext.correlationId,
-                );
-              }),
-            },
-          });
-
-          const actor = createActor(retryMachine, {
-            input: {
-              regon,
-              silosId,
-              correlationId,
-              retryStrategy: this.gusRetryStrategy,  // Inject strategy
-            }
-          });
-          actor.start();
-
-          // Use toPromise() helper (idiomatic XState v5 pattern)
-          await toPromise(actor);
-
-          const snapshot = actor.getSnapshot();
-          if (snapshot.value !== 'success') {
-            throw snapshot.output ||
-              snapshot.context?.lastError ||
-              new Error('GUS detailed data retry failed');
-          }
-
-          return snapshot.output ?? snapshot.context?.result;
+        // GUS Detailed Data with retry logic via factory
+        retryGusDetailedData: createRetryActor({
+          strategyName: this.gusRetryStrategy.name,
+          retryStrategy: this.gusRetryStrategy,
+          retryConfig: this.machineConfig.retry.gus,
+          logger: this.logger,
+          serviceCall: (ctx) =>
+            this.gusService.getDetailedReport(ctx.regon!, ctx.silosId!, ctx.correlationId),
         }),
 
-        // KRS Data with retry logic via state machine
-        retryKrsData: fromPromise(async ({ input }: { input: { krsNumber: string; registry: 'P' | 'S'; correlationId: string } }) => {
-          const { krsNumber, registry, correlationId } = input;
-
-          const retryMachine = createRetryMachine(
-            this.krsRetryStrategy.name,  // Use strategy name
-            correlationId,
-            this.logger,
-            this.machineConfig.retry.krs,
-          ).provide({
-            actors: {
-              // Explicit type annotation resolves XState v5 type inference limitation
-              makeApiRequest: fromPromise<any, MakeApiRequestInput>(async ({ input }) => {
-                const { context: retryContext } = input;
-                return this.krsService.fetchFromRegistry(
-                  retryContext.krsNumber!,
-                  retryContext.registry!,
-                  retryContext.correlationId,
-                );
-              }),
-            },
-          });
-
-          const actor = createActor(retryMachine, {
-            input: {
-              krsNumber,
-              registry,
-              correlationId,
-              retryStrategy: this.krsRetryStrategy,  // Inject strategy
-            }
-          });
-
-          // Use Promise-based pattern for proper error propagation to orchestration onError guards
-          return new Promise((resolve, reject) => {
-            actor.subscribe({
-              complete: () => {
-                const snapshot = actor.getSnapshot();
-                if (snapshot.value === 'success') {
-                  resolve(snapshot.output ?? snapshot.context?.result);
-                } else {
-                  // Reject with error object so orchestration guards can evaluate it
-                  reject(
-                    snapshot.output ||
-                      snapshot.context?.lastError ||
-                      new Error('KRS retry failed'),
-                  );
-                }
-              },
-              error: (err) => reject(err),
-            });
-            actor.start();
-          });
+        // KRS Data with retry logic via factory
+        retryKrsData: createRetryActor({
+          strategyName: this.krsRetryStrategy.name,
+          retryStrategy: this.krsRetryStrategy,
+          retryConfig: this.machineConfig.retry.krs,
+          logger: this.logger,
+          serviceCall: (ctx) =>
+            this.krsService.fetchFromRegistry(ctx.krsNumber!, ctx.registry!, ctx.correlationId),
         }),
 
-        // CEIDG Data with retry logic via state machine
-        retryCeidgData: fromPromise(async ({ input }: { input: { nip: string; correlationId: string } }) => {
-          const { nip, correlationId } = input;
-
-          const retryMachine = createRetryMachine(
-            this.ceidgRetryStrategy.name,
-            correlationId,
-            this.logger,
-            this.machineConfig.retry.ceidg,
-          ).provide({
-            actors: {
-              // Explicit type annotation resolves XState v5 type inference limitation
-              makeApiRequest: fromPromise<any, MakeApiRequestInput>(async ({ input }) => {
-                const { context: retryContext } = input;
-                return this.ceidgService.getCompanyByNip(
-                  retryContext.nip!,
-                  retryContext.correlationId,
-                );
-              }),
-            },
-          });
-
-          const actor = createActor(retryMachine, {
-            input: {
-              nip,
-              correlationId,
-              retryStrategy: this.ceidgRetryStrategy,
-            }
-          });
-          actor.start();
-
-          // Use toPromise() helper (idiomatic XState v5 pattern)
-          await toPromise(actor);
-
-          const snapshot = actor.getSnapshot();
-          if (snapshot.value !== 'success') {
-            throw snapshot.output ||
-              snapshot.context?.lastError ||
-              new Error('CEIDG retry failed');
-          }
-
-          return snapshot.output ?? snapshot.context?.result;
+        // CEIDG Data with retry logic via factory
+        retryCeidgData: createRetryActor({
+          strategyName: this.ceidgRetryStrategy.name,
+          retryStrategy: this.ceidgRetryStrategy,
+          retryConfig: this.machineConfig.retry.ceidg,
+          logger: this.logger,
+          serviceCall: (ctx) => this.ceidgService.getCompanyByNip(ctx.nip!, ctx.correlationId),
         }),
 
         // Inactive company mapping (no retry needed)

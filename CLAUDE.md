@@ -49,7 +49,12 @@ src/
 │   │   │   └── orchestration.service.ts
 │   │   └── state-machines/          # XState orchestration
 │   │       ├── orchestration.machine.ts
-│   │       └── retry.machine.ts
+│   │       ├── retry.machine.ts
+│   │       ├── retry-actor.factory.ts  # Factory pattern (eliminates duplication)
+│   │       └── strategies/          # Retry strategies per service
+│   │           ├── gus-retry.strategy.ts
+│   │           ├── krs-retry.strategy.ts
+│   │           └── ceidg-retry.strategy.ts
 │   ├── external-apis/               # API adapters (stubs)
 │   │   ├── gus/                     # GUS SOAP service
 │   │   ├── krs/                     # KRS REST service
@@ -283,11 +288,12 @@ This ensures safe operation out-of-the-box.
 
 ### Retry Architecture
 
-The application uses a **centralized retry strategy** via XState machines:
+The application uses a **centralized retry strategy** via XState machines with a **factory pattern** to eliminate code duplication:
 
 #### Implementation Pattern
 - **Service Layer** (`gus.service.ts`, `krs.service.ts`, `ceidg-v3.service.ts`): NO retry logic, methods throw errors directly
-- **Orchestration Layer** (`orchestration.machine.ts`): Manages all retry logic via `retry.machine.ts`
+- **Orchestration Layer** (`orchestration.service.ts`): Uses `createRetryActor()` factory for all retry actors
+- **Retry Actor Factory** (`retry-actor.factory.ts`): Generic factory function that eliminates ~180 lines of duplication
 - **Retry Machine** (`retry.machine.ts`): Generic, reusable state machine for exponential backoff
 
 #### Configuration per Service
@@ -379,6 +385,44 @@ invoke: {
 - `snapshot.output` + `snapshot.context.result` fallback for data retrieval
 - Proper error propagation via `reject()`
 
+#### Retry Actor Factory Pattern (Code Duplication Elimination)
+
+**Problem**: Previously, `orchestration.service.ts` had 4 nearly identical retry actors with ~42 lines each (~180 lines total duplication).
+
+**Solution**: Generic `createRetryActor()` factory function in `retry-actor.factory.ts`:
+
+```typescript
+// Before (42 lines per actor × 4 actors = ~180 lines):
+retryGusClassification: fromPromise(async ({ input }) => {
+  const { nip, correlationId } = input;
+  const retryMachine = createRetryMachine(this.gusRetryStrategy.name, correlationId, this.logger, this.machineConfig.retry.gus);
+  // ... 35 more lines of boilerplate ...
+})
+
+// After (7 lines per actor × 4 actors = ~28 lines):
+retryGusClassification: createRetryActor({
+  strategyName: this.gusRetryStrategy.name,
+  retryStrategy: this.gusRetryStrategy,
+  retryConfig: this.machineConfig.retry.gus,
+  logger: this.logger,
+  serviceCall: (ctx) => this.gusService.getClassificationByNip(ctx.nip!, ctx.correlationId),
+})
+```
+
+**Benefits**:
+- ✅ **Reduced from 529 to 376 lines** (-153 lines, -29%)
+- ✅ **Single source of truth** for retry actor creation logic
+- ✅ **Eliminated inconsistencies** (KRS used Promise pattern, others used toPromise())
+- ✅ **Type-safe generics** with `RetryActorConfig<TInput, TResult>`
+- ✅ **Easier maintenance**: Update factory once, all actors benefit
+- ✅ **Improved readability**: Focus on what to retry, not how to retry
+
+**Factory Features**:
+- Generic types for type-safe input/output across services
+- Consistent error handling and logging for all retry actors
+- Automatic correlation ID tracking through retry attempts
+- Supports all service-specific parameters (nip, regon, krsNumber, etc.)
+
 #### Known XState v5 TypeScript Limitations
 
 **Issue #1: TS2719 ActionFunction Type Incompatibility** ✅ **RESOLVED**
@@ -461,6 +505,12 @@ The GUS service (`gus.service.ts`) uses **strong-soap v5.0.2** with custom reque
    - **Benefits**: Prevents overwhelming GUS API with concurrent bursts, thread-safe
 4. **Session Management**: HTTP header `sid` (not SOAP header) with automatic re-addition before each operation
 5. **MTOM Response Handling**: strong-soap automatically parses MTOM (`application/xop+xml`) responses
+6. **Promise Construction Pattern**: SOAP helpers use manual `new Promise()` instead of `util.promisify`
+   - **Rationale**: strong-soap callbacks return multiple values `(err, result, envelope, soapHeader)`
+   - `util.promisify` only captures first non-error argument, losing `envelope` data
+   - Manual Promise construction preserves all callback values with custom transformation
+   - Defensive `try/catch` around operation calls prevents unhandled rejections
+   - See `gus-soap.helpers.ts` for detailed JSDoc explanation
 
 ### State Machine Integration
 
@@ -637,10 +687,11 @@ curl -X POST http://localhost:3000/api/companies \
 
 **Implementation**:
 - **Incoming HTTP requests**: class-validator (DTO) + ValidationPipe + GlobalExceptionFilter
-- **Environment variables**: Zod schemas (environment.schema.ts)
+- **Environment variables**: Zod schemas (environment.schema.ts) with production safety checks
 - **External API responses**: Zod schemas (gus.service.ts, krs.service.ts, ceidg-v3.service.ts)
 
-**Request Validation Flow**:
+#### Request Validation Flow
+
 ```
 HTTP Request → ValidationPipe (validates DTO)
                     ↓ (on error)
@@ -666,6 +717,46 @@ HTTP Request → ValidationPipe (validates DTO)
 - ✅ NestJS best practices and conventions
 - ✅ No manual validation in controllers
 - ✅ Centralized error handling for all exceptions
+
+#### Environment Variable Validation (Production Safety)
+
+The `environment.schema.ts` uses Zod's `.superRefine()` to enforce production-specific security requirements:
+
+**Production URL Validation Approach**:
+```typescript
+// Hardcoded default values (extracted as constants)
+const DEFAULT_GUS_BASE_URL = 'https://wyszukiwarkaregon.stat.gov.pl/...';
+const DEFAULT_KRS_BASE_URL = 'https://api-krs.ms.gov.pl';
+
+// Validation compares resolved config values with defaults
+.superRefine((config, ctx) => {
+  if (config.NODE_ENV === 'production') {
+    // Compare config values (after .default() applied) with hardcoded defaults
+    if (config.GUS_BASE_URL === DEFAULT_GUS_BASE_URL) {
+      ctx.addIssue({ /* fail with security warning */ });
+    }
+  }
+});
+```
+
+**Why Value Comparison (Not `process.env` Check)**:
+- `.superRefine()` runs **AFTER** `.default()` transformations
+- Comparing `config` values catches **both** missing env vars AND explicitly set defaults
+- Prevents edge case: `export GUS_BASE_URL=<default-value>` would bypass `process.env` checks
+- More robust: validates actual resolved configuration, not input state
+
+**Production Requirements**:
+- ✅ All API URLs (`GUS_BASE_URL`, `KRS_BASE_URL`, `CEIDG_BASE_URL`) must differ from defaults
+- ✅ `APP_CORS_ALLOWED_ORIGINS` cannot be wildcard `*`
+- ✅ Application fails fast on startup if validation fails
+
+**Example Error**:
+```
+Production environment detected with default API URLs!
+The following environment variables are using default values:
+GUS_BASE_URL, KRS_BASE_URL, CEIDG_BASE_URL.
+This is a security risk. Please explicitly set these variables...
+```
 
 ### Error Handling
 
@@ -784,7 +875,7 @@ If you encounter module resolution errors:
 
 1. **Environment validation fails**: Check all required environment variables
 2. **Tests timeout**: Ensure `NODE_ENV=development` is set for tests
-3. **Module resolution errors**: This project uses relative imports exclusively (see Module Resolution section below for reasoning)
+3. **Module resolution errors**: See Module Resolution and Imports section above for path alias configuration
 4. **Correlation ID validation**: Changed from UUID to simple string validation
 
 ### Development Server
