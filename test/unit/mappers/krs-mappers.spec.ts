@@ -162,57 +162,6 @@ describe('KRS Mappers', () => {
     });
   });
 
-  describe('isActive', () => {
-    test('should return true for entities with non-empty name', () => {
-      const result = KrsMappers.isActive(mockKrsResponse);
-      expect(result).toBe(true);
-    });
-
-    test('should return false for entities with empty name', () => {
-      const responseWithEmptyName: KrsResponse = {
-        ...mockKrsResponse,
-        odpis: {
-          ...mockKrsResponse.odpis,
-          dane: {
-            ...mockKrsResponse.odpis.dane,
-            dzial1: {
-              ...mockKrsResponse.odpis.dane.dzial1,
-              danePodmiotu: {
-                ...mockKrsResponse.odpis.dane.dzial1.danePodmiotu,
-                nazwa: '',
-              },
-            },
-          },
-        },
-      };
-
-      const result = KrsMappers.isActive(responseWithEmptyName);
-      expect(result).toBe(false);
-    });
-
-    test('should handle minimal valid company name', () => {
-      const responseWithShortName: KrsResponse = {
-        ...mockKrsResponse,
-        odpis: {
-          ...mockKrsResponse.odpis,
-          dane: {
-            ...mockKrsResponse.odpis.dane,
-            dzial1: {
-              ...mockKrsResponse.odpis.dane.dzial1,
-              danePodmiotu: {
-                ...mockKrsResponse.odpis.dane.dzial1.danePodmiotu,
-                nazwa: 'A',
-              },
-            },
-          },
-        },
-      };
-
-      const result = KrsMappers.isActive(responseWithShortName);
-      expect(result).toBe(true);
-    });
-  });
-
   describe('extractPartners', () => {
     test('should return partners when dzial2 exists', () => {
       const result = KrsMappers.extractPartners(mockKrsResponse);
@@ -332,11 +281,6 @@ describe('KRS Mappers', () => {
         expect(typeof result.adres.miejscowosc).toBe('string');
         expect(typeof result.adres.kodPocztowy).toBe('string');
       }
-    });
-
-    test('isActive should return boolean', () => {
-      const result = KrsMappers.isActive(mockKrsResponse);
-      expect(typeof result).toBe('boolean');
     });
 
     test('extractPartners should return array', () => {

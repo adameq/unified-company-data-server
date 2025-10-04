@@ -593,15 +593,6 @@ export const KrsMappers = {
   },
 
   /**
-   * Check if entity is active based on KRS data
-   */
-  isActive: (krsResponse: KrsResponse): boolean => {
-    // Entity is active if it has a current record
-    // More sophisticated logic could be added based on specific KRS fields
-    return krsResponse.odpis.dane.dzial1.danePodmiotu.nazwa.length > 0;
-  },
-
-  /**
    * Extract partners/shareholders from KRS data
    */
   extractPartners: (krsResponse: KrsResponse) => {
