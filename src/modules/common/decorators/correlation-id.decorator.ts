@@ -26,11 +26,10 @@ import { Request } from 'express';
  * }
  * ```
  *
- * @returns The correlation ID string from the request
- * @throws Will return undefined if CorrelationIdMiddleware is not configured
+ * @returns The correlation ID string from the request (always present)
  */
 export const CorrelationId = createParamDecorator(
-  (data: unknown, ctx: ExecutionContext): string | undefined => {
+  (data: unknown, ctx: ExecutionContext): string => {
     const request = ctx.switchToHttp().getRequest<Request>();
 
     // Extract correlation ID that was added by CorrelationIdMiddleware
