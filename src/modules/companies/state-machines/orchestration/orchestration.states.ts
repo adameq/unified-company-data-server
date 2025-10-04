@@ -375,6 +375,7 @@ export const entityNotFoundFailure = {
       message: 'Entity not found',
       correlationId: context.correlationId,
       source: 'INTERNAL',
+      timestamp: new Date().toISOString(),
     },
 } as const;
 
@@ -392,6 +393,7 @@ export const deregisteredFailure = {
       message: 'Entity is deregistered',
       correlationId: context.correlationId,
       source: 'INTERNAL',
+      timestamp: new Date().toISOString(),
     },
 } as const;
 
@@ -409,6 +411,7 @@ export const systemFaultFailure = {
       message: 'System fault occurred',
       correlationId: context.correlationId,
       source: 'INTERNAL',
+      timestamp: new Date().toISOString(),
     },
 } as const;
 
@@ -426,6 +429,7 @@ export const mappingFailure = {
       message: 'Data mapping failed',
       correlationId: context.correlationId,
       source: 'INTERNAL',
+      timestamp: new Date().toISOString(),
     },
 } as const;
 
@@ -442,5 +446,6 @@ export const timeoutFailure = {
     message: 'Company data retrieval timed out',
     correlationId: context.correlationId,
     source: 'INTERNAL',
+    timestamp: new Date().toISOString(),
   }),
 } as const;

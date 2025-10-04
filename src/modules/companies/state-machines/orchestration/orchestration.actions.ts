@@ -294,7 +294,7 @@ export const captureSystemError = assign(({ context, event }: { context: FullOrc
       message: error?.message || 'Unknown system error',
       correlationId: context.correlationId,
       source: error?.source || 'INTERNAL',
-      timestamp: new Date(),
+      timestamp: new Date().toISOString(),
       originalError: error,
     },
   };
