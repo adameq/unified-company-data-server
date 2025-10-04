@@ -312,9 +312,11 @@ export class OrchestrationService implements OnModuleInit {
       throw new BusinessException(output);
     }
 
-    // Success state - validate and return UnifiedCompanyData
-    // If validation fails, Zod throws ZodError which GlobalExceptionFilter handles via ZodErrorHandler
-    return UnifiedCompanyDataSchema.parse(output);
+    // Success state - return UnifiedCompanyData
+    // Data is already validated by UnifiedDataMapper.mapToUnifiedFormat() (line 104 in unified-data.mapper.ts)
+    // No need for redundant validation here - trust the validation at system boundary
+    // Type assertion is safe because UnifiedDataMapper guarantees schema compliance
+    return output as UnifiedCompanyData;
   }
 
   /**
