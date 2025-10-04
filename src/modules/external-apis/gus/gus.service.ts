@@ -202,16 +202,15 @@ export class GusService {
         throw new BusinessException(errorResponse);
       }
 
-      // Check for GUS error responses before parsing
-      if (xmlData.includes('<ErrorCode>')) {
-        const parsedError = await this.parseXmlResponse(xmlData, correlationId);
+      // Always parse XML first, then check for errors in parsed object
+      const parsedData = await this.parseXmlResponse(xmlData, correlationId);
 
-        // Handle different GUS error codes
-        const errorCode =
-          parsedError?.dane?.ErrorCode || parsedError?.ErrorCode;
+      // Check for GUS error responses in parsed object (not raw XML string)
+      const errorCode = parsedData?.dane?.ErrorCode || parsedData?.ErrorCode;
+      if (errorCode) {
         const errorMessage =
-          parsedError?.dane?.ErrorMessagePl ||
-          parsedError?.ErrorMessagePl ||
+          parsedData?.dane?.ErrorMessagePl ||
+          parsedData?.ErrorMessagePl ||
           'Unknown GUS error';
 
         if (errorCode === '4') {
@@ -235,8 +234,6 @@ export class GusService {
         });
         throw new BusinessException(errorResponse);
       }
-
-      const parsedData = await this.parseXmlResponse(xmlData, correlationId);
 
       // Validate response with Zod using safeParse
       const validation = GusClassificationResponseSchema.safeParse(parsedData);
