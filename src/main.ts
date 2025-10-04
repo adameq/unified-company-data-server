@@ -1,11 +1,12 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe, Logger } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { Environment } from './config/environment.schema';
 import { getHelmetConfig, getHelmetSecuritySummary } from './config/helmet.config';
+import { AppValidationPipe } from './modules/common/pipes/app-validation.pipe';
 
 async function bootstrap() {
   // Environment validation is now handled by ConfigModule.forRoot({ validate })
@@ -67,10 +68,6 @@ async function bootstrap() {
   // Global validation pipe with custom AppValidationPipe
   // AppValidationPipe extends ValidationPipe to ensure ALL validation errors
   // (including whitelist violations) are converted to structured ValidationException
-  const { AppValidationPipe } = await import(
-    './modules/common/pipes/app-validation.pipe.js'
-  );
-
   app.useGlobalPipes(
     new AppValidationPipe({
       whitelist: true,
