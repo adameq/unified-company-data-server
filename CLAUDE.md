@@ -33,6 +33,75 @@ The project is a production-ready microservice with complete external API integr
 - **Logging**: NestJS built-in Logger (console output)
 - **Health Checks**: @nestjs/terminus (MemoryHealthIndicator, extensible for disk/database)
 - **Documentation**: Swagger/OpenAPI integration
+- **HTTP Client**: axios (direct use, not @nestjs/axios wrapper)
+
+### HTTP Client Architecture
+
+**Decision: Use `axios` directly instead of `@nestjs/axios`**
+
+The project uses **per-service axios instances** with `axios.create()` for external API integrations (KRS, CEIDG). This architectural choice provides several benefits over `@nestjs/axios`:
+
+**Why axios instead of @nestjs/axios:**
+
+1. **Per-Service Configuration**
+   - Each external API requires different configuration (baseURL, headers, timeouts, interceptors)
+   - KRS and CEIDG have distinct authentication, retry policies, and error handling
+   - `axios.create()` provides isolated instances with full control
+   - `@nestjs/axios` HttpService is a global singleton - difficult to manage multiple configurations
+
+2. **Promise Pattern Consistency**
+   - Entire codebase uses async/await (Promise pattern)
+   - `@nestjs/axios` returns RxJS Observables, requiring `firstValueFrom()` wrapper
+   - Direct axios keeps code simple and consistent
+
+3. **Service-Specific Interceptors**
+   - KRS: Response interceptor for error logging
+   - CEIDG: Request interceptor (debugging) + Response interceptor (error logging)
+   - Each service has custom interceptor logic
+   - `@nestjs/axios` uses global interceptors - harder to manage service-specific logic
+
+4. **Transitional Configuration**
+   - Services use `transitional.clarifyTimeoutError: true` to distinguish ETIMEDOUT vs ECONNABORTED
+   - Critical for error-detection.utils.ts timeout detection
+   - Easier to configure with direct axios instances
+
+5. **Type Guards Dependency**
+   - `error-detection.utils.ts` uses `axios.isAxiosError()` for type guards
+   - Even with `@nestjs/axios`, would still need `axios` as a dependency
+   - Direct use eliminates unnecessary abstraction layer
+
+**Architecture Pattern:**
+```typescript
+// Each service creates its own axios instance
+@Injectable()
+export class KrsService {
+  private readonly httpClient: AxiosInstance;
+
+  constructor(private readonly configService: ConfigService) {
+    this.httpClient = axios.create({
+      baseURL: this.configService.get('KRS_BASE_URL'),
+      timeout: this.configService.get('APP_EXTERNAL_API_TIMEOUT'),
+      headers: { Accept: 'application/json' },
+      transitional: { clarifyTimeoutError: true },
+    });
+
+    // Service-specific interceptors
+    this.httpClient.interceptors.response.use(...);
+  }
+}
+```
+
+**When @nestjs/axios makes sense:**
+- Single global HTTP client for entire application
+- RxJS Observables preferred over Promises
+- Global interceptors for all requests
+- Simpler use cases without per-service configuration
+
+**Our use case:**
+- Multiple HTTP clients with different configurations
+- Promise-based async/await pattern throughout
+- Service-specific interceptors and error handling
+- Direct axios control for precise configuration
 
 ### Project Structure
 
