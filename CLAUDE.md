@@ -1013,6 +1013,229 @@ GUS_BASE_URL, KRS_BASE_URL, CEIDG_BASE_URL.
 This is a security risk. Please explicitly set these variables...
 ```
 
+### String Parsing Strategy
+
+**Architectural Decision**: The codebase contains **intentional string parsing** in 5 specific locations for framework/API limitations. This is NOT technical debt.
+
+#### Philosophy
+
+String parsing is generally **anti-pattern** because:
+- Error messages change between library versions
+- Localization breaks string matching
+- False positives from partial matches
+- Brittle and hard to maintain
+
+However, **strategic string parsing is acceptable** when:
+1. No structural alternative exists (framework limitation)
+2. Used as **last-resort fallback** after type-safe checks
+3. **Extensively documented** with rationale
+4. Failure mode is safe (fallback to generic error)
+5. Limited to framework/external API boundaries (not business logic)
+
+#### Type-Safe Detection Priority
+
+The application **always prioritizes type-safe detection** before string parsing:
+
+**Preferred Detection Methods** (in order):
+1. **Error codes**: `error.code === 'ECONNABORTED'`
+2. **HTTP status codes**: `error.response?.status === 404`
+3. **Type guards**: `instanceof`, `'property' in object`
+4. **Structured properties**: `error.fault?.faultcode`
+5. **String parsing**: Only as last resort
+
+**Implementation**: `src/modules/common/utils/error-detection.utils.ts`
+- Type-safe utilities for all error types (Axios, Node.js, SOAP)
+- Property checks before any string parsing
+- Comprehensive JSDoc explaining each detection strategy
+
+#### Intentional String Parsing Locations
+
+All 5 locations are cross-referenced here for architectural awareness:
+
+##### 1. Startup Error Detection (`src/main.ts` lines 220-248)
+
+**Purpose**: Developer experience - helpful startup error messages
+
+**Why string parsing?**
+- Node.js error messages vary by platform and version
+- No error codes for dependency injection failures
+- This code runs ONLY at startup (not in request handling)
+- Failure mode: Generic error message (safe)
+
+**Alternatives considered**:
+- Remove helpful hints → Poor developer experience
+- Parse error.stack → Even more brittle than message parsing
+
+**Example**:
+```typescript
+// INTENTIONAL STRING PARSING - Developer Experience Only
+if (errorMessage.includes('EADDRINUSE')) {
+  logger.error(`\n💡 Port ${port} is already in use. Please:`);
+  // ... helpful suggestions
+}
+```
+
+##### 2. Body-Parser Error Detection (`src/modules/common/filters/global-exception.filter.ts` lines 135-160)
+
+**Purpose**: Detect JSON parse errors from request body
+
+**Why string parsing?**
+- NestJS wraps body-parser `SyntaxError` in generic `BadRequestException`
+- body-parser does not set `error.code` or `error.type`
+- No way to distinguish JSON parse errors from other 400 errors
+
+**Alternatives considered**:
+- Custom body-parser middleware → Fork/wrap body-parser (high maintenance)
+- Fork NestJS ValidationPipe → Maintain compatibility with NestJS updates
+- Both options create more technical debt than string parsing
+
+**Example**:
+```typescript
+// INTENTIONAL STRING PARSING - NestJS/Express Framework Limitation
+if (messageLower.includes('unexpected token') ||
+    messageLower.includes('invalid json')) {
+  return createErrorResponse({
+    errorCode: 'INVALID_REQUEST_FORMAT',
+    message: 'Request body contains invalid JSON',
+    ...
+  });
+}
+```
+
+##### 3. Whitelist Validation Detection (`src/modules/common/pipes/app-validation.pipe.ts` lines 129-133)
+
+**Purpose**: Detect extra unexpected fields in request body
+
+**Why string parsing?**
+- NestJS ValidationPipe hardcodes message "property {name} should not exist"
+- No error codes for whitelist violations
+- Both normal validation and whitelist violations throw `BadRequestException`
+- Message format is part of NestJS public API (unlikely to change)
+
+**Alternatives considered**:
+- Fork ValidationPipe → Duplicate NestJS internal logic (fragile)
+- Custom decorators → Requires extensive framework modifications
+- Both options create more complexity than string parsing
+
+**Example**:
+```typescript
+// INTENTIONAL STRING PARSING - NestJS Framework Limitation
+return response.message.some(
+  (msg: any) =>
+    typeof msg === 'string' &&
+    msg.toLowerCase().includes('should not exist'),
+);
+```
+
+##### 4. GUS Session Error Fallback (`src/modules/external-apis/gus/handlers/gus-error.handler.ts` lines 196-208)
+
+**Purpose**: Catch session errors not matching SOAP fault structure
+
+**Why string parsing?**
+- GUS API sometimes returns session errors in unexpected formats
+- Primary detection via SOAP fault (type-safe) runs FIRST
+- String parsing is **fallback only** for edge cases
+- String check runs AFTER all structural checks fail
+
+**Alternatives considered**:
+- Remove fallback → Miss edge case session errors (wrong behavior)
+- Parse all possible GUS formats → Impossible (API not documented)
+
+**Example**:
+```typescript
+// INTENTIONAL STRING PARSING - fallback after type-safe checks
+// Primary detection: isSoapFault + getGusErrorCode (lines 110-122)
+if (
+  errorMessage.toLowerCase().includes('session') ||
+  errorMessage.toLowerCase().includes('unauthorized')
+) {
+  return createErrorResponse({ errorCode: 'GUS_SESSION_EXPIRED', ... });
+}
+```
+
+##### 5. GUS Error Code Parsing (`src/modules/common/utils/error-detection.utils.ts` lines 249-257)
+
+**Purpose**: Extract error code from GUS fault string when not in structured XML
+
+**Why string parsing?**
+- GUS API sometimes embeds error code in message: "... (kod=2)"
+- Structured `error.fault.detail.KomunikatKod` is checked FIRST
+- Regex parsing is **fallback only**
+- This is a GUS API limitation (inconsistent error format)
+
+**Alternatives considered**:
+- Contact GUS to fix API → Not realistic (government API)
+- Skip error code extraction → Lose valuable debugging information
+
+**Example**:
+```typescript
+// Strategy 1: Structured detail object (PREFERRED)
+if (detail?.KomunikatKod) {
+  return detail.KomunikatKod;
+}
+
+// Strategy 2: Fallback - parse from faultstring
+// INTENTIONAL STRING PARSING - GUS API limitation
+const match = faultString.match(/kod[=\s]+(\d+)/i);
+if (match) {
+  return match[1];
+}
+```
+
+#### When to Add New String Parsing
+
+**DO NOT add string parsing** unless:
+1. ✅ You've exhausted all type-safe alternatives
+2. ✅ Framework/external API limitation is documented
+3. ✅ Type-safe checks run first (string parsing is fallback)
+4. ✅ Extensive JSDoc explains rationale
+5. ✅ Cross-reference added to this CLAUDE.md section
+6. ✅ Failure mode is safe (generic error code)
+
+**Questions to ask before adding string parsing**:
+- Can I use `error.code` instead?
+- Can I check `error.response?.status` instead?
+- Can I use `instanceof` or property checks?
+- Is this a business logic error (should be BusinessException)?
+- Is this at the framework boundary or in application logic?
+
+#### Testing Strategy
+
+String parsing locations have **defensive tests**:
+- Integration tests verify current behavior
+- Tests document expected string formats
+- Tests fail loudly if framework messages change
+- See: `tests/integration/companies-errors.spec.ts`
+
+**When framework updates break string parsing**:
+1. Tests will fail immediately (early detection)
+2. Check if framework now provides error codes
+3. Update to type-safe detection if possible
+4. Update string patterns if necessary
+5. Document the change in git commit
+
+#### Summary
+
+**5 intentional string parsing locations** in codebase:
+1. `main.ts` - Startup error hints (developer experience)
+2. `global-exception.filter.ts` - Body-parser errors (NestJS limitation)
+3. `app-validation.pipe.ts` - Whitelist validation (NestJS limitation)
+4. `gus-error.handler.ts` - Session error fallback (GUS API edge cases)
+5. `error-detection.utils.ts` - GUS error code fallback (GUS API limitation)
+
+**All other error detection is type-safe** using:
+- `error-detection.utils.ts` - Type-safe error detection utilities
+- Property checks, type guards, error codes
+- No string parsing in business logic
+- No string parsing in service layers
+
+This architectural decision prioritizes:
+- ✅ Pragmatism over ideological purity
+- ✅ Developer experience (helpful error messages)
+- ✅ Maintainability (avoid forking frameworks)
+- ✅ Safety (fallback to generic errors)
+- ✅ Documentation (extensive rationale for each case)
+
 ### Error Handling
 
 Comprehensive error handling with:
