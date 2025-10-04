@@ -8,12 +8,15 @@ import { RetryStrategy } from '../retry-strategy.interface';
  * Retryable errors:
  * - 5xx Server Errors (500, 502, 503, etc.)
  * - Session errors (SESSION_EXPIRED, SESSION_ERROR, GUS_SESSION_ERROR)
+ * - Transient connection errors (GUS_CONNECTION_ERROR - network issues)
  *
  * Non-retryable errors:
  * - 404 Not Found (entity doesn't exist in registry)
  * - 400 Bad Request (invalid NIP format, invalid parameters)
  * - 401 Unauthorized (invalid API key)
  * - All 4xx Client Errors
+ * - GUS_WSDL_PARSE_ERROR (WSDL parsing failure - not transient)
+ * - GUS_AUTHENTICATION_FAILED (invalid credentials - not transient)
  *
  * GUS-specific behavior:
  * GUS API uses SOAP sessions that can expire during long operations.
@@ -36,12 +39,13 @@ export class GusRetryStrategy implements RetryStrategy {
       return false;
     }
 
-    // GUS-specific: Retry on 5xx AND session errors
+    // GUS-specific: Retry on 5xx, session errors, and transient connection errors
     return (
       statusCode >= 500 ||
       errorCode === 'SESSION_EXPIRED' ||
       errorCode === 'SESSION_ERROR' ||
-      errorCode === 'GUS_SESSION_ERROR'
+      errorCode === 'GUS_SESSION_ERROR' ||
+      errorCode === 'GUS_CONNECTION_ERROR' // Network issues are transient
     );
   }
 
@@ -53,11 +57,15 @@ export class GusRetryStrategy implements RetryStrategy {
    * - 400: Invalid request format (bad NIP, invalid parameters)
    * - 401: Authentication failure (invalid API key)
    * - Other 4xx: Client-side issues
+   * - GUS_WSDL_PARSE_ERROR: WSDL parsing failure (configuration issue)
+   * - GUS_AUTHENTICATION_FAILED: Invalid credentials (not transient)
    */
   private isNonRetryableClientError(statusCode: number, errorCode: string): boolean {
     return (
       statusCode === 404 ||
       errorCode === 'ENTITY_NOT_FOUND' ||
+      errorCode === 'GUS_WSDL_PARSE_ERROR' ||
+      errorCode === 'GUS_AUTHENTICATION_FAILED' ||
       (statusCode >= 400 && statusCode < 500)
     );
   }

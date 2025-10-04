@@ -302,21 +302,95 @@ export class GusSessionManager {
 
       return this.currentSession;
     } catch (error) {
+      const errorObj = error as any;
       const errorMessage =
         error instanceof Error ? error.message : String(error);
+
       this.logger.error('Failed to create GUS session with strong-soap', {
         error: errorMessage,
+        errorCode: errorObj.code,
         correlationId,
       });
 
+      // Detailed error analysis for better diagnostics
+
+      // 1. Timeout errors (WSDL loading or Zaloguj operation)
+      if (
+        errorObj.code === 'ECONNABORTED' ||
+        errorMessage.includes('timeout') ||
+        errorMessage.includes('ETIMEDOUT')
+      ) {
+        throw new BusinessException(
+          createErrorResponse({
+            errorCode: 'TIMEOUT_ERROR',
+            message: 'GUS service timeout during session creation',
+            correlationId,
+            source: 'GUS',
+            details: {
+              originalError: errorMessage,
+              errorCode: errorObj.code,
+              operation: 'createSession',
+            },
+          }),
+        );
+      }
+
+      // 2. Network/connection errors
+      if (
+        errorObj.code === 'ECONNREFUSED' ||
+        errorObj.code === 'ENOTFOUND' ||
+        errorObj.code === 'ECONNRESET' ||
+        errorMessage.includes('socket hang up') ||
+        errorMessage.includes('getaddrinfo')
+      ) {
+        throw new BusinessException(
+          createErrorResponse({
+            errorCode: 'GUS_CONNECTION_ERROR',
+            message: 'Cannot connect to GUS service',
+            correlationId,
+            source: 'GUS',
+            details: {
+              originalError: errorMessage,
+              errorCode: errorObj.code,
+              wsdlUrl: this.config.wsdlUrl,
+              baseUrl: this.config.baseUrl,
+            },
+          }),
+        );
+      }
+
+      // 3. WSDL parsing errors (invalid XML, schema errors)
+      if (
+        errorMessage.toLowerCase().includes('wsdl') ||
+        errorMessage.toLowerCase().includes('parse') ||
+        errorMessage.toLowerCase().includes('invalid') ||
+        errorMessage.toLowerCase().includes('xml')
+      ) {
+        throw new BusinessException(
+          createErrorResponse({
+            errorCode: 'GUS_WSDL_PARSE_ERROR',
+            message: 'Failed to parse GUS WSDL definition',
+            correlationId,
+            source: 'GUS',
+            details: {
+              originalError: errorMessage,
+              wsdlUrl: this.config.wsdlUrl,
+            },
+          }),
+        );
+      }
+
+      // 4. Authentication errors (invalid API key, access denied) - fallback
       throw new BusinessException(
         createErrorResponse({
           errorCode: 'GUS_AUTHENTICATION_FAILED',
-          message:
-            'Failed to authenticate with GUS service using strong-soap',
+          message: 'Failed to authenticate with GUS service',
           correlationId,
           source: 'GUS',
-          details: { originalError: errorMessage },
+          details: {
+            originalError: errorMessage,
+            errorCode: errorObj.code,
+          },
         }),
       );
     }
