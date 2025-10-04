@@ -17,7 +17,25 @@ import { isTimeoutError, isNetworkError } from '@common/utils/error-detection.ut
  * 1. Detecting if it can handle an exception (canHandle)
  * 2. Converting the exception to ErrorResponse (handle)
  *
- * Handlers are executed in priority order (lowest number = highest priority)
+ * Handler Selection Strategy:
+ * - Handlers are executed in priority order (lowest number = highest priority)
+ * - First matching handler wins (Array.find() behavior in findHandler())
+ * - More specific handlers MUST have lower priority than generic handlers
+ *
+ * Priority Architecture (from highest to lowest):
+ * - BusinessExceptionHandler (1) - catches BusinessException before HttpExceptionHandler
+ * - ValidationExceptionHandler (2) - catches ValidationException before HttpExceptionHandler
+ * - HttpExceptionHandler (3) - catches remaining HttpExceptions (UnauthorizedException, etc.)
+ * - ZodErrorHandler (4) - catches Zod validation errors
+ * - TimeoutErrorHandler (5) - catches timeout errors
+ * - NetworkErrorHandler (6) - catches network errors
+ * - StandardErrorHandler (7) - catches standard Error instances
+ * - UnknownExceptionHandler (99) - fallback for all other exceptions
+ *
+ * Open/Closed Principle:
+ * - New exception types can be added without modifying existing handlers
+ * - Generic handlers (like HttpExceptionHandler) don't need to explicitly exclude specific types
+ * - Priority ordering ensures correct handler selection
  */
 
 export interface ExceptionHandler {
@@ -82,17 +100,14 @@ export class HttpExceptionHandler implements ExceptionHandler {
       return false;
     }
 
-    // CRITICAL: Explicitly exclude specialized exception types
-    // These exceptions extend HttpException but have dedicated handlers
-    if (exception instanceof BusinessException) {
-      return false;
-    }
+    // REMOVED: Explicit exclusions of BusinessException and ValidationException
+    // These are now handled by priority ordering:
+    // - BusinessExceptionHandler (priority 1) catches BusinessException before this handler
+    // - ValidationExceptionHandler (priority 2) catches ValidationException before this handler
+    // - HttpExceptionHandler (priority 3) catches remaining HttpExceptions
+    // This eliminates tight coupling and follows Open/Closed Principle
 
-    if (exception instanceof ValidationException) {
-      return false;
-    }
-
-    // Skip if already an ErrorResponse
+    // Skip if already an ErrorResponse (avoid double-wrapping)
     const response = exception.getResponse();
     if (typeof response === 'object' && response && 'errorCode' in response) {
       return false;
@@ -302,6 +317,19 @@ export class UnknownExceptionHandler implements ExceptionHandler {
  *
  * Central registry for all exception handlers.
  * Handlers are sorted by priority (lowest number first).
+ *
+ * IMPORTANT: Handler selection relies on priority ordering.
+ * More specific handlers (BusinessException, ValidationException)
+ * MUST have lower priority numbers than generic handlers (HttpException).
+ *
+ * Example:
+ * - BusinessExceptionHandler (priority 1) catches BusinessException
+ * - HttpExceptionHandler (priority 3) catches remaining HttpExceptions
+ * - First matching handler wins (Array.find() behavior)
+ *
+ * Defensive Programming:
+ * - validatePriorities() ensures correct priority configuration
+ * - Throws error if specific handlers have higher priority than generic ones
  */
 export class ExceptionHandlerRegistry {
   private static handlers: ExceptionHandler[] = [
@@ -316,9 +344,57 @@ export class ExceptionHandlerRegistry {
   ];
 
   /**
+   * Validate handler priorities (defensive programming)
+   *
+   * Ensures more specific handlers have lower priority than generic ones.
+   * Throws error if configuration is incorrect.
+   *
+   * Rationale:
+   * - BusinessExceptionHandler must catch BusinessException before HttpExceptionHandler
+   * - ValidationExceptionHandler must catch ValidationException before HttpExceptionHandler
+   * - Without this validation, incorrect priorities would cause subtle bugs
+   */
+  private static validatePriorities(): void {
+    const businessHandler = this.handlers.find(
+      (h) => h.name === 'BusinessExceptionHandler',
+    );
+    const validationHandler = this.handlers.find(
+      (h) => h.name === 'ValidationExceptionHandler',
+    );
+    const httpHandler = this.handlers.find(
+      (h) => h.name === 'HttpExceptionHandler',
+    );
+
+    if (
+      businessHandler &&
+      httpHandler &&
+      businessHandler.priority >= httpHandler.priority
+    ) {
+      throw new Error(
+        `Configuration error: BusinessExceptionHandler (priority ${businessHandler.priority}) ` +
+          `must have lower priority than HttpExceptionHandler (priority ${httpHandler.priority})`,
+      );
+    }
+
+    if (
+      validationHandler &&
+      httpHandler &&
+      validationHandler.priority >= httpHandler.priority
+    ) {
+      throw new Error(
+        `Configuration error: ValidationExceptionHandler (priority ${validationHandler.priority}) ` +
+          `must have lower priority than HttpExceptionHandler (priority ${httpHandler.priority})`,
+      );
+    }
+  }
+
+  /**
    * Get all handlers sorted by priority
+   *
+   * Validates priorities before returning to catch configuration errors early.
    */
   static getAll(): ExceptionHandler[] {
+    this.validatePriorities();
     return [...this.handlers].sort((a, b) => a.priority - b.priority);
   }
 
