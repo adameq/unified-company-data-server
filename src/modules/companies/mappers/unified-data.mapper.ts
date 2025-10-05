@@ -8,8 +8,8 @@ import type {
   GusLegalPersonReport,
   GusPhysicalPersonReport,
 } from '@modules/external-apis/gus/gus.service';
-import type { KrsResponse } from '@modules/external-apis/krs/krs.service';
-import type { CeidgCompany } from '@modules/external-apis/ceidg/ceidg-v3.service';
+import type { KrsResponse } from '@modules/external-apis/krs/schemas/krs-response.schema';
+import type { CeidgCompany } from '@modules/external-apis/ceidg/schemas/ceidg-response.schema';
 
 /**
  * Unified Data Mapper Service
@@ -40,6 +40,76 @@ export interface MappingContext {
 @Injectable()
 export class UnifiedDataMapper {
   private readonly logger = new Logger(UnifiedDataMapper.name);
+
+  // Configuration-driven field extraction for GUS data
+  private readonly GUS_FIELD_CONFIG = {
+    nazwa: { fieldName: 'nazwa', defaultValue: 'Unknown Company' },
+    regon: { fieldName: 'regon9', defaultValue: '' },
+    miejscowosc: { fieldName: 'adSiedzMiejscowosc_Nazwa', defaultValue: 'Unknown' },
+    kodPocztowy: {
+      fieldName: 'adSiedzKodPocztowy',
+      defaultValue: '00-000',
+      transform: (v: string) => this.formatPostalCode(v),
+    },
+    ulica: { fieldName: 'adSiedzUlica_Nazwa', defaultValue: undefined },
+    numerBudynku: { fieldName: 'adSiedzNumerNieruchomosci', defaultValue: undefined },
+    numerLokalu: { fieldName: 'adSiedzNumerLokalu', defaultValue: undefined },
+    wojewodztwo: {
+      fieldName: 'adSiedzWojewodztwo_Nazwa',
+      defaultValue: 'unknown',
+      transform: (v: string) => v.toLowerCase(),
+    },
+    powiat: { fieldName: 'adSiedzPowiat_Nazwa', defaultValue: undefined },
+    gmina: { fieldName: 'adSiedzGmina_Nazwa', defaultValue: undefined },
+    dataRozpoczecia: {
+      fieldName: 'dataRozpoczeciaDzialalnosci',
+      defaultValue: new Date().toISOString().split('T')[0],
+      transform: (v: string) => this.formatDate(v),
+      requireTruthy: true,
+    },
+    dataZakonczenia: {
+      fieldName: 'dataZakonczeniaDzialalnosci',
+      defaultValue: undefined,
+      transform: (v: string) => this.formatDate(v),
+      requireTruthy: true,
+    },
+  } as const;
+
+  // Map-based CEIDG status mapping (direct key-value)
+  private readonly CEIDG_STATUS_MAP = new Map<string, UnifiedCompanyData['status']>([
+    ['AKTYWNY', 'AKTYWNY'],
+    ['WYKRESLONY', 'WYREJESTROWANY'],
+    ['ZAWIESZONY', 'ZAWIESZONY'],
+    ['OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI', 'NIEAKTYWNY'],
+    ['WYLACZNIE_W_FORMIE_SPOLKI', 'NIEAKTYWNY'],
+  ]);
+
+  // Ordered pattern matching for KRS legal forms (order matters!)
+  private readonly KRS_LEGAL_FORM_PATTERNS = [
+    // Capital companies (spółki kapitałowe) - check specific forms first
+    { pattern: /prosta spółka akcyjna/i, form: 'PROSTA SPÓŁKA AKCYJNA' as const },
+    { pattern: /spółka komandytowo-akcyjna/i, form: 'SPÓŁKA KOMANDYTOWO-AKCYJNA' as const },
+    { pattern: /spółka akcyjna/i, form: 'SPÓŁKA AKCYJNA' as const },
+    { pattern: /(spółka z ograniczoną odpowiedzialnością|sp\. z o\.o\.)/i, form: 'SPÓŁKA Z O.O.' as const },
+    { pattern: /spółka europejska/i, form: 'SPÓŁKA EUROPEJSKA' as const },
+
+    // Partnerships (spółki osobowe)
+    { pattern: /spółka jawna/i, form: 'SPÓŁKA JAWNA' as const },
+    { pattern: /spółka partnerska/i, form: 'SPÓŁKA PARTNERSKA' as const },
+    { pattern: /spółka komandytowa/i, form: 'SPÓŁKA KOMANDYTOWA' as const },
+
+    // Other entities
+    { pattern: /fundacja/i, form: 'FUNDACJA' as const },
+    { pattern: /stowarzyszenie/i, form: 'STOWARZYSZENIE' as const },
+    { pattern: /działalność gospodarcza/i, form: 'DZIAŁALNOŚĆ GOSPODARCZA' as const },
+  ] as const;
+
+  // Ordered pattern matching for GUS legal forms
+  private readonly GUS_LEGAL_FORM_PATTERNS = [
+    { pattern: /(spółka z ograniczoną odpowiedzialnością|sp\. z o\.o\.)/i, form: 'SPÓŁKA Z O.O.' as const },
+    { pattern: /stowarzyszenie/i, form: 'STOWARZYSZENIE' as const },
+    { pattern: /działalność gospodarcza/i, form: 'DZIAŁALNOŚĆ GOSPODARCZA' as const },
+  ] as const;
 
   /**
    * Main entry point for mapping all available data sources to unified format
@@ -310,6 +380,8 @@ export class UnifiedDataMapper {
 
   /**
    * Map GUS-only data (fallback when KRS/CEIDG unavailable)
+   *
+   * Uses configuration-driven field extraction instead of wrapper methods
    */
   private mapGusOnlyData(context: MappingContext): UnifiedCompanyData {
     const { gusDetailedData, nip, correlationId } = context;
@@ -324,24 +396,38 @@ export class UnifiedDataMapper {
       });
     }
 
+    const cfg = this.GUS_FIELD_CONFIG;
+
     return {
       nip,
-      nazwa: this.extractGusName(gusDetailedData),
+      nazwa: this.extractGusField(gusDetailedData, cfg.nazwa.fieldName, cfg.nazwa.defaultValue),
       adres: {
-        miejscowosc: this.extractGusLocation(gusDetailedData),
-        kodPocztowy: this.extractGusPostalCode(gusDetailedData),
-        ulica: this.extractGusStreet(gusDetailedData),
-        numerBudynku: this.extractGusHouseNumber(gusDetailedData),
-        numerLokalu: this.extractGusApartmentNumber(gusDetailedData),
-        wojewodztwo: this.extractGusProvince(gusDetailedData),
-        powiat: this.extractGusDistrict(gusDetailedData),
-        gmina: this.extractGusCommune(gusDetailedData),
+        miejscowosc: this.extractGusField(gusDetailedData, cfg.miejscowosc.fieldName, cfg.miejscowosc.defaultValue),
+        kodPocztowy: this.extractGusField(gusDetailedData, cfg.kodPocztowy.fieldName, cfg.kodPocztowy.defaultValue, cfg.kodPocztowy.transform),
+        ulica: this.extractGusField(gusDetailedData, cfg.ulica.fieldName, cfg.ulica.defaultValue),
+        numerBudynku: this.extractGusField(gusDetailedData, cfg.numerBudynku.fieldName, cfg.numerBudynku.defaultValue),
+        numerLokalu: this.extractGusField(gusDetailedData, cfg.numerLokalu.fieldName, cfg.numerLokalu.defaultValue),
+        wojewodztwo: this.extractGusField(gusDetailedData, cfg.wojewodztwo.fieldName, cfg.wojewodztwo.defaultValue, cfg.wojewodztwo.transform),
+        powiat: this.extractGusField(gusDetailedData, cfg.powiat.fieldName, cfg.powiat.defaultValue),
+        gmina: this.extractGusField(gusDetailedData, cfg.gmina.fieldName, cfg.gmina.defaultValue),
       },
       status: this.mapStatusFromGus(gusDetailedData),
       isActive: this.isEntityActive(gusDetailedData),
-      dataRozpoczeciaDzialalnosci: this.extractGusStartDate(gusDetailedData),
-      dataZakonczeniaDzialalnosci: this.extractGusEndDate(gusDetailedData),
-      regon: this.extractGusRegon(gusDetailedData),
+      dataRozpoczeciaDzialalnosci: this.extractGusField(
+        gusDetailedData,
+        cfg.dataRozpoczecia.fieldName,
+        cfg.dataRozpoczecia.defaultValue,
+        cfg.dataRozpoczecia.transform,
+        cfg.dataRozpoczecia.requireTruthy,
+      ),
+      dataZakonczeniaDzialalnosci: this.extractGusField(
+        gusDetailedData,
+        cfg.dataZakonczenia.fieldName,
+        cfg.dataZakonczenia.defaultValue,
+        cfg.dataZakonczenia.transform,
+        cfg.dataZakonczenia.requireTruthy,
+      ),
+      regon: this.extractGusField(gusDetailedData, cfg.regon.fieldName, cfg.regon.defaultValue),
       formaPrawna: this.mapLegalForm(this.extractGusLegalForm(gusDetailedData)),
       typPodmiotu: this.isLegalPerson(gusDetailedData)
         ? ('PRAWNA' as const)
@@ -409,129 +495,44 @@ export class UnifiedDataMapper {
   }
 
   // GUS data extraction helpers
-  private extractGusName(
-    data: GusLegalPersonReport | GusPhysicalPersonReport,
-  ): string {
-    if ('praw_nazwa' in data) return data.praw_nazwa;
-    if ('fiz_nazwa' in data) return data.fiz_nazwa;
-    return 'Unknown Company';
-  }
 
-  private extractGusRegon(
+  /**
+   * Generic helper to extract GUS field for both legal and physical persons
+   *
+   * Automatically checks for both praw_${fieldName} and fiz_${fieldName} variants.
+   * Supports optional transformation and default values.
+   *
+   * @param data - GUS report data (legal or physical person)
+   * @param fieldName - Base field name (without praw_/fiz_ prefix)
+   * @param defaultValue - Value to return if field not found
+   * @param transform - Optional transformation function (e.g., formatPostalCode, toLowerCase)
+   * @param requireTruthy - Only return value if truthy (for date fields)
+   * @returns Extracted field value or default
+   */
+  private extractGusField<T>(
     data: GusLegalPersonReport | GusPhysicalPersonReport,
-  ): string {
-    if ('praw_regon9' in data) return data.praw_regon9;
-    if ('fiz_regon9' in data) return data.fiz_regon9;
-    return '';
-  }
-
-  private extractGusLocation(
-    data: GusLegalPersonReport | GusPhysicalPersonReport,
-  ): string {
-    if ('praw_adSiedzMiejscowosc_Nazwa' in data)
-      return data.praw_adSiedzMiejscowosc_Nazwa;
-    if ('fiz_adSiedzMiejscowosc_Nazwa' in data)
-      return data.fiz_adSiedzMiejscowosc_Nazwa;
-    return 'Unknown';
-  }
-
-  private extractGusPostalCode(
-    data: GusLegalPersonReport | GusPhysicalPersonReport,
-  ): string {
-    if ('praw_adSiedzKodPocztowy' in data)
-      return this.formatPostalCode(data.praw_adSiedzKodPocztowy);
-    if ('fiz_adSiedzKodPocztowy' in data)
-      return this.formatPostalCode(data.fiz_adSiedzKodPocztowy);
-    return '00-000';
-  }
-
-  private extractGusStreet(
-    data: GusLegalPersonReport | GusPhysicalPersonReport,
-  ): string | undefined {
-    if ('praw_adSiedzUlica_Nazwa' in data) return data.praw_adSiedzUlica_Nazwa;
-    if ('fiz_adSiedzUlica_Nazwa' in data) return data.fiz_adSiedzUlica_Nazwa;
-    return undefined;
-  }
-
-  private extractGusHouseNumber(
-    data: GusLegalPersonReport | GusPhysicalPersonReport,
-  ): string | undefined {
-    if ('praw_adSiedzNumerNieruchomosci' in data)
-      return data.praw_adSiedzNumerNieruchomosci;
-    if ('fiz_adSiedzNumerNieruchomosci' in data)
-      return data.fiz_adSiedzNumerNieruchomosci;
-    return undefined;
-  }
-
-  private extractGusApartmentNumber(
-    data: GusLegalPersonReport | GusPhysicalPersonReport,
-  ): string | undefined {
-    if ('praw_adSiedzNumerLokalu' in data) return data.praw_adSiedzNumerLokalu;
-    if ('fiz_adSiedzNumerLokalu' in data) return data.fiz_adSiedzNumerLokalu;
-    return undefined;
-  }
-
-  private extractGusProvince(
-    data: GusLegalPersonReport | GusPhysicalPersonReport,
-  ): string {
-    if ('praw_adSiedzWojewodztwo_Nazwa' in data)
-      return data.praw_adSiedzWojewodztwo_Nazwa.toLowerCase();
-    if ('fiz_adSiedzWojewodztwo_Nazwa' in data)
-      return data.fiz_adSiedzWojewodztwo_Nazwa.toLowerCase();
-    return 'unknown';
-  }
-
-  private extractGusDistrict(
-    data: GusLegalPersonReport | GusPhysicalPersonReport,
-  ): string | undefined {
-    if ('praw_adSiedzPowiat_Nazwa' in data)
-      return data.praw_adSiedzPowiat_Nazwa;
-    if ('fiz_adSiedzPowiat_Nazwa' in data) return data.fiz_adSiedzPowiat_Nazwa;
-    return undefined;
-  }
-
-  private extractGusCommune(
-    data: GusLegalPersonReport | GusPhysicalPersonReport,
-  ): string | undefined {
-    if ('praw_adSiedzGmina_Nazwa' in data) return data.praw_adSiedzGmina_Nazwa;
-    if ('fiz_adSiedzGmina_Nazwa' in data) return data.fiz_adSiedzGmina_Nazwa;
-    return undefined;
-  }
-
-  private extractGusStartDate(
-    data: GusLegalPersonReport | GusPhysicalPersonReport,
-  ): string {
-    if (
-      'praw_dataRozpoczeciaDzialalnosci' in data &&
-      data.praw_dataRozpoczeciaDzialalnosci
-    ) {
-      return this.formatDate(data.praw_dataRozpoczeciaDzialalnosci);
+    fieldName: string,
+    defaultValue: T,
+    transform?: (value: string) => string,
+    requireTruthy: boolean = false,
+  ): T {
+    // Check legal person variant (praw_)
+    const prawKey = `praw_${fieldName}` as keyof typeof data;
+    if (prawKey in data) {
+      const value = data[prawKey] as string;
+      if (requireTruthy && !value) return defaultValue;
+      return (transform ? transform(value) : value) as T;
     }
-    if (
-      'fiz_dataRozpoczeciaDzialalnosci' in data &&
-      data.fiz_dataRozpoczeciaDzialalnosci
-    ) {
-      return this.formatDate(data.fiz_dataRozpoczeciaDzialalnosci);
-    }
-    return new Date().toISOString().split('T')[0];
-  }
 
-  private extractGusEndDate(
-    data: GusLegalPersonReport | GusPhysicalPersonReport,
-  ): string | undefined {
-    if (
-      'praw_dataZakonczeniaDzialalnosci' in data &&
-      data.praw_dataZakonczeniaDzialalnosci
-    ) {
-      return this.formatDate(data.praw_dataZakonczeniaDzialalnosci);
+    // Check physical person variant (fiz_)
+    const fizKey = `fiz_${fieldName}` as keyof typeof data;
+    if (fizKey in data) {
+      const value = data[fizKey] as string;
+      if (requireTruthy && !value) return defaultValue;
+      return (transform ? transform(value) : value) as T;
     }
-    if (
-      'fiz_dataZakonczeniaDzialalnosci' in data &&
-      data.fiz_dataZakonczeniaDzialalnosci
-    ) {
-      return this.formatDate(data.fiz_dataZakonczeniaDzialalnosci);
-    }
-    return undefined;
+
+    return defaultValue;
   }
 
   private extractGusLegalForm(
@@ -555,33 +556,19 @@ export class UnifiedDataMapper {
     | 'WYREJESTROWANY'
     | 'W LIKWIDACJI'
     | 'UPADŁOŚĆ' {
-    const endDate = this.extractGusEndDate(data);
+    const cfg = this.GUS_FIELD_CONFIG;
+    const endDate = this.extractGusField(
+      data,
+      cfg.dataZakonczenia.fieldName,
+      cfg.dataZakonczenia.defaultValue,
+      cfg.dataZakonczenia.transform,
+      cfg.dataZakonczenia.requireTruthy,
+    );
     return endDate ? 'WYREJESTROWANY' : 'AKTYWNY';
   }
 
-  private mapCeidgStatus(
-    ceidgStatus: string,
-  ):
-    | 'AKTYWNY'
-    | 'NIEAKTYWNY'
-    | 'ZAWIESZONY'
-    | 'WYREJESTROWANY'
-    | 'W LIKWIDACJI'
-    | 'UPADŁOŚĆ' {
-    switch (ceidgStatus) {
-      case 'AKTYWNY':
-        return 'AKTYWNY';
-      case 'WYKRESLONY':
-        return 'WYREJESTROWANY';
-      case 'ZAWIESZONY':
-        return 'ZAWIESZONY';
-      case 'OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI':
-        return 'NIEAKTYWNY';
-      case 'WYLACZNIE_W_FORMIE_SPOLKI':
-        return 'NIEAKTYWNY';
-      default:
-        return 'NIEAKTYWNY';
-    }
+  private mapCeidgStatus(ceidgStatus: string): UnifiedCompanyData['status'] {
+    return this.CEIDG_STATUS_MAP.get(ceidgStatus) ?? 'NIEAKTYWNY';
   }
 
   private mapLegalForm(
@@ -594,105 +581,49 @@ export class UnifiedDataMapper {
     | undefined {
     if (!gusForm) return undefined;
 
-    const normalizedForm = gusForm.toLowerCase();
-    if (
-      normalizedForm.includes('spółka z ograniczoną odpowiedzialnością') ||
-      normalizedForm.includes('sp. z o.o.')
-    ) {
-      return 'SPÓŁKA Z O.O.';
+    // Loop through patterns in order
+    for (const { pattern, form } of this.GUS_LEGAL_FORM_PATTERNS) {
+      if (pattern.test(gusForm)) {
+        return form;
+      }
     }
-    if (normalizedForm.includes('stowarzyszenie')) {
-      return 'STOWARZYSZENIE';
-    }
-    if (normalizedForm.includes('działalność gospodarcza')) {
-      return 'DZIAŁALNOŚĆ GOSPODARCZA';
-    }
+
+    // No match found
     return 'INNA';
   }
 
   /**
-   * Map legal form from KRS to normalized format
+   * Map legal form from KRS to normalized format using pattern matching
    *
    * KRS provides legal form as Polish text (e.g., "SPÓŁKA Z OGRANICZONĄ ODPOWIEDZIALNOŚCIĄ")
-   * This method normalizes it to standard enum values.
+   * This method normalizes it to standard enum values using ordered regex patterns.
    *
    * @param krsForm - Legal form string from KRS API
    * @returns Normalized legal form or 'INNA' for unknown forms
    */
-  private mapKrsLegalForm(
-    krsForm: string,
-  ):
-    | 'SPÓŁKA Z O.O.'
-    | 'SPÓŁKA AKCYJNA'
-    | 'PROSTA SPÓŁKA AKCYJNA'
-    | 'SPÓŁKA EUROPEJSKA'
-    | 'SPÓŁKA JAWNA'
-    | 'SPÓŁKA PARTNERSKA'
-    | 'SPÓŁKA KOMANDYTOWA'
-    | 'SPÓŁKA KOMANDYTOWO-AKCYJNA'
-    | 'FUNDACJA'
-    | 'STOWARZYSZENIE'
-    | 'DZIAŁALNOŚĆ GOSPODARCZA'
-    | 'INNA' {
-    const normalizedForm = krsForm.toLowerCase();
-
-    // Spółki kapitałowe
-    if (
-      normalizedForm.includes('spółka z ograniczoną odpowiedzialnością') ||
-      normalizedForm.includes('sp. z o.o.')
-    ) {
-      return 'SPÓŁKA Z O.O.';
-    }
-    if (
-      normalizedForm.includes('spółka akcyjna') &&
-      !normalizedForm.includes('prosta') &&
-      !normalizedForm.includes('komandytowo')
-    ) {
-      return 'SPÓŁKA AKCYJNA';
-    }
-    if (normalizedForm.includes('prosta spółka akcyjna')) {
-      return 'PROSTA SPÓŁKA AKCYJNA';
-    }
-    if (normalizedForm.includes('spółka europejska')) {
-      return 'SPÓŁKA EUROPEJSKA';
+  private mapKrsLegalForm(krsForm: string): UnifiedCompanyData['formaPrawna'] {
+    // Loop through patterns in order (order matters for specific vs general forms)
+    for (const { pattern, form } of this.KRS_LEGAL_FORM_PATTERNS) {
+      if (pattern.test(krsForm)) {
+        return form;
+      }
     }
 
-    // Spółki osobowe
-    if (normalizedForm.includes('spółka jawna')) {
-      return 'SPÓŁKA JAWNA';
-    }
-    if (normalizedForm.includes('spółka partnerska')) {
-      return 'SPÓŁKA PARTNERSKA';
-    }
-    if (
-      normalizedForm.includes('spółka komandytowa') &&
-      !normalizedForm.includes('akcyjna')
-    ) {
-      return 'SPÓŁKA KOMANDYTOWA';
-    }
-    if (normalizedForm.includes('spółka komandytowo-akcyjna')) {
-      return 'SPÓŁKA KOMANDYTOWO-AKCYJNA';
-    }
-
-    // Inne formy prawne
-    if (normalizedForm.includes('fundacja')) {
-      return 'FUNDACJA';
-    }
-    if (normalizedForm.includes('stowarzyszenie')) {
-      return 'STOWARZYSZENIE';
-    }
-    if (normalizedForm.includes('działalność gospodarcza')) {
-      return 'DZIAŁALNOŚĆ GOSPODARCZA';
-    }
-
-    // Nieznana forma prawna
+    // No match found
     return 'INNA';
   }
 
   private isEntityActive(
     data: GusLegalPersonReport | GusPhysicalPersonReport,
   ): boolean {
-    return !this.extractGusEndDate(data);
+    const cfg = this.GUS_FIELD_CONFIG;
+    return !this.extractGusField(
+      data,
+      cfg.dataZakonczenia.fieldName,
+      cfg.dataZakonczenia.defaultValue,
+      cfg.dataZakonczenia.transform,
+      cfg.dataZakonczenia.requireTruthy,
+    );
   }
 
   private isLegalPerson(

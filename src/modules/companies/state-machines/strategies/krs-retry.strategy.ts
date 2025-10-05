@@ -1,3 +1,4 @@
+import { Injectable } from '@nestjs/common';
 import { RetryStrategy } from '../retry-strategy.interface';
 
 /**
@@ -24,6 +25,7 @@ import { RetryStrategy } from '../retry-strategy.interface';
  * not retry logic. A 404 from registry P will NOT be retried - instead,
  * orchestration will try registry S.
  */
+@Injectable()
 export class KrsRetryStrategy implements RetryStrategy {
   readonly name = 'KRS';
 

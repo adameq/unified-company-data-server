@@ -232,6 +232,7 @@ export const extractKrsNumber = assign(({ context, event }: { context: FullOrche
     gusData?.praw_numerWRejestrzeEwidencji ||
     gusData?.praw_krs ||
     gusData?.krs;
+
   context.logger.debug('extractKrsNumber', {
     correlationId: context.correlationId,
     krsNumber,
@@ -294,7 +295,7 @@ export const captureSystemError = assign(({ context, event }: { context: FullOrc
       message: error?.message || 'Unknown system error',
       correlationId: context.correlationId,
       source: error?.source || 'INTERNAL',
-      timestamp: new Date(),
+      timestamp: new Date().toISOString(),
       originalError: error,
     },
   };

@@ -1,3 +1,4 @@
+import { Injectable } from '@nestjs/common';
 import { RetryStrategy } from '../retry-strategy.interface';
 
 /**
@@ -28,6 +29,7 @@ import { RetryStrategy } from '../retry-strategy.interface';
  *
  * Note: If CEIDG fails, orchestration layer falls back to GUS detailed data.
  */
+@Injectable()
 export class CeidgRetryStrategy implements RetryStrategy {
   readonly name = 'CEIDG';
 

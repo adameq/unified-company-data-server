@@ -15,11 +15,10 @@ import type { ErrorResponse } from '@schemas/error-response.schema';
  */
 
 /**
- * Helper function to convert lastError (with Date timestamp) to ErrorResponse (with ISO string timestamp)
+ * Helper function to convert lastError to ErrorResponse format
  *
- * OrchestrationContext uses Date objects for timestamps (z.date()),
- * but ErrorResponse requires ISO strings (z.string().datetime()).
- * This helper bridges the gap when failure states return errors.
+ * Both OrchestrationContext.lastError and ErrorResponse use ISO string timestamps,
+ * so no type conversion is needed - this function just extracts the fields.
  */
 function convertLastErrorToErrorResponse(
   context: FullOrchestrationContext,
@@ -27,15 +26,13 @@ function convertLastErrorToErrorResponse(
   fallbackMessage: string,
 ): ErrorResponse {
   if (context.lastError) {
-    // Convert Date timestamp to ISO string for ErrorResponse
+    // Direct mapping - timestamp is already ISO string
     return {
       errorCode: context.lastError.errorCode,
       message: context.lastError.message,
       correlationId: context.correlationId,
       source: context.lastError.source,
-      timestamp: context.lastError.timestamp instanceof Date
-        ? context.lastError.timestamp.toISOString()
-        : context.lastError.timestamp,
+      timestamp: context.lastError.timestamp,
     } as ErrorResponse;
   }
 

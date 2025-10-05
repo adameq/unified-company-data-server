@@ -5,17 +5,43 @@ import { z } from 'zod';
  *
  * These constants are used in .superRefine() to detect when production
  * environments are using default URLs instead of explicit configuration.
+ *
+ * PRODUCTION ENVIRONMENT:
+ * - Uses production GUS API (current, live data)
+ * - Requires registered API key from GUS
+ * - Subject to rate limits and quotas
  */
 const DEFAULT_GUS_BASE_URL = 'https://wyszukiwarkaregon.stat.gov.pl/wsBIR/UslugaBIRzewnPubl.svc';
 const DEFAULT_GUS_WSDL_URL = 'https://wyszukiwarkaregon.stat.gov.pl/wsBIR/wsdl/UslugaBIRzewnPubl-ver11-prod.wsdl';
 const DEFAULT_KRS_BASE_URL = 'https://api-krs.ms.gov.pl';
 const DEFAULT_CEIDG_BASE_URL = 'https://dane.biznes.gov.pl/api/ceidg/v3';
 
+/**
+ * Test environment constants for GUS API
+ *
+ * GUS provides a dedicated test environment with:
+ * - Full database snapshot from 8.11.2014 (outdated but complete)
+ * - Anonymized personal names and addresses
+ * - No registration required - test key works immediately
+ * - No rate limits or quotas
+ * - Stable data for consistent testing
+ *
+ * TEST ENVIRONMENT:
+ * - URL: https://wyszukiwarkaregontest.stat.gov.pl/wsBIR/UslugaBIRzewnPubl.svc
+ * - WSDL: https://wyszukiwarkaregontest.stat.gov.pl/wsBIR/wsdl/UslugaBIRzewnPubl-ver11-test.wsdl
+ * - API Key: abcde12345abcde12345 (public test key)
+ *
+ * Usage: Set these values in .env.test or .env.development for testing
+ */
+const TEST_GUS_BASE_URL = 'https://wyszukiwarkaregontest.stat.gov.pl/wsBIR/UslugaBIRzewnPubl.svc';
+const TEST_GUS_WSDL_URL = 'https://wyszukiwarkaregontest.stat.gov.pl/wsBIR/wsdl/UslugaBIRzewnPubl-ver11-test.wsdl';
+const TEST_GUS_USER_KEY = 'abcde12345abcde12345';
+
 export const EnvironmentSchema = z
   .object({
     // Server Configuration
     NODE_ENV: z
-      .enum(['development', 'staging', 'production'])
+      .enum(['development', 'test', 'staging', 'production'])
       .default('development'),
     PORT: z.coerce.number().int().min(1).max(65535).default(3000),
 
@@ -112,6 +138,7 @@ export const EnvironmentSchema = z
     // Production safety check: fail fast if using default URLs in production
     // NOTE: .superRefine() runs AFTER .default() transformations, so we compare
     // the resolved config values against hardcoded defaults (not process.env)
+    // Test and development environments are allowed to use default (test) URLs
     if (config.NODE_ENV === 'production') {
       const usingDefaults: string[] = [];
 

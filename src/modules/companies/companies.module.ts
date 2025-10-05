@@ -6,6 +6,9 @@ import { OrchestrationService } from './services/orchestration.service';
 import { UnifiedDataMapper } from './mappers/unified-data.mapper';
 import { ExternalApisModule } from '../external-apis/external-apis.module';
 import { OrchestrationMachineProvider } from './state-machines/orchestration/orchestration.provider';
+import { GusRetryStrategy } from './state-machines/strategies/gus-retry.strategy';
+import { KrsRetryStrategy } from './state-machines/strategies/krs-retry.strategy';
+import { CeidgRetryStrategy } from './state-machines/strategies/ceidg-retry.strategy';
 
 /**
  * Companies Module
@@ -44,6 +47,10 @@ import { OrchestrationMachineProvider } from './state-machines/orchestration/orc
     OrchestrationMachineProvider, // Register base XState machine for DI
     OrchestrationService,
     UnifiedDataMapper,
+    // Retry strategies as injectable NestJS services (DI pattern)
+    GusRetryStrategy,
+    KrsRetryStrategy,
+    CeidgRetryStrategy,
   ],
 })
 export class CompaniesModule {}

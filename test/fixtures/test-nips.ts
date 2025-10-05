@@ -1,18 +1,61 @@
 /**
  * Test NIPs for Integration Tests
  *
- * This file contains real and test NIPs used across integration test suites.
+ * This file contains NIPs used across integration test suites with GUS test environment.
  * Using centralized test data management ensures consistency and makes it easy
  * to update test cases when needed.
+ *
+ * GUS Test Environment:
+ * - Database snapshot from 8.11.2014 (outdated but complete and stable)
+ * - Anonymized personal names and addresses
+ * - Test API key: abcde12345abcde12345 (no registration required)
+ * - All NIPs below are from this 2014 snapshot
+ *
+ * IMPORTANT - Data Mismatch Between GUS Test (2014) and Production KRS/CEIDG (2025):
+ * - GUS test environment returns KRS numbers from 2014 (e.g., "0000028860" for PKN Orlen)
+ * - These old KRS numbers NO LONGER EXIST in current production KRS API
+ * - Result: Tests will show KRS 404 errors in logs → orchestration falls back to GUS-only data
+ * - This is EXPECTED BEHAVIOR - tests verify that fallback mechanism works correctly
+ * - Companies will have zrodloDanych: "GUS" instead of enriched KRS data
+ * - Example: ORLEN returns basic GUS data without current KRS enrichment
  */
 
 export const TEST_NIPS = {
   /**
-   * Valid legal entity with KRS registration
-   * Company: Orange Polska S.A.
+   * PKN Orlen S.A. - Large corporation with KRS registration
+   * Expected: 200 OK with GUS data (KRS 404 due to outdated 2014 KRS number)
+   * Use case: Testing legal entity workflow and GUS-only fallback mechanism
+   * Note: GUS returns old KRS number "0000028860" (2014) which doesn't exist in current KRS API
+   */
+  ORLEN: '7740001454',
+
+  /**
+   * Bakoma Sp. z o.o. - Manufacturer (dairy products)
+   * Expected: 200 OK with complete data from GUS + KRS
+   * Use case: Testing manufacturer entity with full PKD codes
+   */
+  BAKOMA: '8370000812',
+
+  /**
+   * Wielka Orkiestra Świątecznej Pomocy - Foundation
+   * Expected: 200 OK with complete data from GUS + KRS
+   * Use case: Testing non-profit organization workflow
+   */
+  WOSP: '5213003700',
+
+  /**
+   * Individual business activity (CEIDG)
+   * Expected: 200 OK with data from GUS + CEIDG
+   * Use case: Testing individual entrepreneur workflow
+   */
+  INDIVIDUAL_BUSINESS: '7122854882',
+
+  /**
+   * Valid legal entity with KRS registration (alias for ORLEN)
+   * Used for backward compatibility in existing tests
    * Expected: 200 OK with complete data from GUS + KRS
    */
-  VALID_LEGAL_ENTITY: '5260250995',
+  VALID_LEGAL_ENTITY: '7740001454',
 
   /**
    * Non-existent NIP (for testing 404 error handling)
@@ -37,37 +80,6 @@ export const TEST_NIPS = {
    * Expected: 400 Bad Request with INVALID_NIP_FORMAT error code
    */
   INVALID_WITH_LETTERS: '123ABC7890',
-} as const;
-
-/**
- * Test scenarios with descriptions
- */
-export const TEST_SCENARIOS = {
-  SUCCESS: {
-    nip: TEST_NIPS.VALID_LEGAL_ENTITY,
-    expectedStatus: 200,
-    description: 'Valid active company with complete data',
-  },
-  NOT_FOUND: {
-    nip: TEST_NIPS.NON_EXISTENT,
-    expectedStatus: 404,
-    description: 'Non-existent company',
-  },
-  INVALID_FORMAT_SHORT: {
-    nip: TEST_NIPS.INVALID_TOO_SHORT,
-    expectedStatus: 400,
-    description: 'NIP too short',
-  },
-  INVALID_FORMAT_LONG: {
-    nip: TEST_NIPS.INVALID_TOO_LONG,
-    expectedStatus: 400,
-    description: 'NIP too long',
-  },
-  INVALID_FORMAT_LETTERS: {
-    nip: TEST_NIPS.INVALID_WITH_LETTERS,
-    expectedStatus: 400,
-    description: 'NIP contains non-numeric characters',
-  },
 } as const;
 
 /**

@@ -4,6 +4,7 @@ const request = require('supertest');
 import { createTestApp, closeTestApp } from '../helpers/test-app-setup';
 import { TEST_NIPS, getTestApiKey } from '../fixtures/test-nips';
 import type { Environment } from '../../src/config/environment.schema';
+import { calculateBurstLimit } from '../../src/modules/common/config/throttler-limits.helper';
 
 /**
  * T014: Real Integration Tests for Rate Limiting
@@ -21,6 +22,7 @@ import type { Environment } from '../../src/config/environment.schema';
 describe('Integration Tests - Real Rate Limiting Behavior', () => {
   let app: INestApplication;
   let configService: ConfigService<Environment, true>;
+  let burstLimit: number; // Dynamically calculated burst limit
   const validApiKey = getTestApiKey();
   const secondApiKey = `${validApiKey.substring(0, 30)}XX`; // Slightly different key
 
@@ -32,6 +34,11 @@ describe('Integration Tests - Real Rate Limiting Behavior', () => {
     });
     app = testApp;
     configService = config!;
+
+    // Calculate burst limit dynamically from configuration
+    // This ensures tests stay in sync with throttler.config.ts
+    const rateLimitPerMinute = configService.get('APP_RATE_LIMIT_PER_MINUTE', { infer: true });
+    burstLimit = calculateBurstLimit(rateLimitPerMinute).limit;
   });
 
   afterAll(async () => {
@@ -58,15 +65,15 @@ describe('Integration Tests - Real Rate Limiting Behavior', () => {
 
   describe('Rate Limit Enforcement - 429 After Limit', () => {
     it(
-      'should allow 10 requests and then enforce rate limit on 11th request',
+      'should allow N requests (burst limit) and then enforce rate limit on (N+1)th request',
       async () => {
-        // Use a smaller limit for faster testing (10 requests instead of 100)
-        // We test the mechanism, not the exact production limit
-        const testLimit = 10;
+        // Use burst limit (10-second window) for faster testing instead of default limit (60-second window)
+        // Burst limit is dynamically calculated from APP_RATE_LIMIT_PER_MINUTE
+        // With default 100 req/min: burstLimit = min(10, floor(100/6)) = 10 req/10s
         const testNip = TEST_NIPS.VALID_LEGAL_ENTITY;
 
-        // Make requests up to the limit
-        for (let i = 0; i < testLimit; i++) {
+        // Make requests up to the burst limit
+        for (let i = 0; i < burstLimit; i++) {
           const response = await request(app.getHttpServer())
             .post('/api/companies')
             .set('Authorization', `Bearer ${validApiKey}`)
@@ -77,7 +84,7 @@ describe('Integration Tests - Real Rate Limiting Behavior', () => {
           expect(response.body).toHaveProperty('nip', testNip);
         }
 
-        // The (testLimit + 1)th request should be rate limited
+        // The (burstLimit + 1)th request should be rate limited
         const rateLimitedResponse = await request(app.getHttpServer())
           .post('/api/companies')
           .set('Authorization', `Bearer ${validApiKey}`)
@@ -130,10 +137,9 @@ describe('Integration Tests - Real Rate Limiting Behavior', () => {
       'should include Retry-After header in 429 rate limit response',
       async () => {
         const testNip = TEST_NIPS.VALID_LEGAL_ENTITY;
-        const testLimit = 10;
 
-        // Exhaust rate limit
-        for (let i = 0; i < testLimit; i++) {
+        // Exhaust burst limit
+        for (let i = 0; i < burstLimit; i++) {
           await request(app.getHttpServer())
             .post('/api/companies')
             .set('Authorization', `Bearer ${validApiKey}`)
@@ -160,7 +166,8 @@ describe('Integration Tests - Real Rate Limiting Behavior', () => {
       'should enforce separate rate limits for different API keys',
       async () => {
         const testNip = TEST_NIPS.VALID_LEGAL_ENTITY;
-        const testLimit = 5; // Smaller limit for faster testing
+        // Use half of burst limit for faster testing (still validates isolation)
+        const testLimit = Math.max(1, Math.floor(burstLimit / 2));
 
         // Exhaust rate limit for first API key
         for (let i = 0; i < testLimit; i++) {
@@ -202,7 +209,8 @@ describe('Integration Tests - Real Rate Limiting Behavior', () => {
       async () => {
         const customCorrelationId = 'rate-limit-test-correlation-12345';
         const testNip = TEST_NIPS.VALID_LEGAL_ENTITY;
-        const testLimit = 5;
+        // Use half of burst limit for faster testing
+        const testLimit = Math.max(1, Math.floor(burstLimit / 2));
 
         // Exhaust rate limit
         for (let i = 0; i < testLimit; i++) {

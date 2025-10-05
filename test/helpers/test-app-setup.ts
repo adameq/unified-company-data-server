@@ -7,6 +7,7 @@ import { AppModule } from '../../src/app.module';
 import type { Environment } from '../../src/config/environment.schema';
 import { AppValidationPipe } from '../../src/modules/common/pipes/app-validation.pipe';
 import { ThrottlerConfigService } from '../../src/modules/common/config/throttler.config';
+import { getThrottlerConfigsArray } from '../../src/modules/common/config/throttler-limits.helper';
 
 /**
  * Test App Setup Helpers
@@ -154,19 +155,12 @@ export async function createTestApp(
           const configService = new ConfigService();
           const rateLimitPerMinute = Number(process.env.APP_RATE_LIMIT_PER_MINUTE || 100);
 
+          // Use centralized helper to calculate throttler limits
+          // This ensures consistency with production configuration
+          const throttlers = getThrottlerConfigsArray(rateLimitPerMinute);
+
           return {
-            throttlers: [
-              {
-                name: 'default',
-                ttl: 60 * 1000, // 1 minute
-                limit: rateLimitPerMinute,
-              },
-              {
-                name: 'burst',
-                ttl: 10 * 1000, // 10 seconds
-                limit: Math.min(10, Math.floor(rateLimitPerMinute / 6)),
-              },
-            ],
+            throttlers,
             storage: undefined,
 
             // OVERRIDE: Always enable rate limiting when withRateLimiting: true

@@ -50,11 +50,6 @@ export class OrchestrationService implements OnModuleInit {
   private configuredMachine: any;
   private machineConfig!: OrchestrationMachineConfig;
 
-  // Retry strategies (reusable, stateless singletons)
-  private readonly gusRetryStrategy = new GusRetryStrategy();
-  private readonly krsRetryStrategy = new KrsRetryStrategy();
-  private readonly ceidgRetryStrategy = new CeidgRetryStrategy();
-
   constructor(
     @Inject(ORCHESTRATION_MACHINE) private readonly baseMachine: any,
     private readonly gusService: GusService,
@@ -62,6 +57,10 @@ export class OrchestrationService implements OnModuleInit {
     private readonly ceidgService: CeidgV3Service,
     private readonly unifiedDataMapper: UnifiedDataMapper,
     private readonly configService: ConfigService<Environment, true>,
+    // Retry strategies injected via DI (follows Dependency Inversion Principle)
+    private readonly gusRetryStrategy: GusRetryStrategy,
+    private readonly krsRetryStrategy: KrsRetryStrategy,
+    private readonly ceidgRetryStrategy: CeidgRetryStrategy,
   ) {
     this.logger.log('OrchestrationService initialized', {
       architecture: 'XState v5 with DI + Strategy Pattern',

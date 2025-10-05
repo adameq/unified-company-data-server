@@ -1,4 +1,5 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
+import { ThrottlerException } from '@nestjs/throttler';
 import { ZodError } from 'zod';
 import {
   createErrorResponse,
@@ -25,6 +26,7 @@ import { isTimeoutError, isNetworkError } from '@common/utils/error-detection.ut
  * Priority Architecture (from highest to lowest):
  * - BusinessExceptionHandler (1) - catches BusinessException before HttpExceptionHandler
  * - ValidationExceptionHandler (2) - catches ValidationException before HttpExceptionHandler
+ * - ThrottlerExceptionHandler (2.5) - catches ThrottlerException with dynamic retryAfter
  * - HttpExceptionHandler (3) - catches remaining HttpExceptions (UnauthorizedException, etc.)
  * - ZodErrorHandler (4) - catches Zod validation errors
  * - TimeoutErrorHandler (5) - catches timeout errors
@@ -84,6 +86,52 @@ export class ValidationExceptionHandler implements ExceptionHandler {
   handle(exception: unknown, correlationId: string): ErrorResponse {
     const validationException = exception as ValidationException;
     return validationException.toErrorResponse(correlationId);
+  }
+}
+
+/**
+ * Handler for ThrottlerException (rate limiting)
+ *
+ * Separates rate limiting control logic from error response formatting.
+ * CustomThrottlerGuard throws standard ThrottlerException,
+ * this handler converts it to business ErrorResponse with dynamic retryAfter.
+ *
+ * RetryAfter Calculation:
+ * - Uses default throttler TTL (60 seconds) as safe retry window
+ * - This ensures client waits long enough for all throttler windows to reset
+ * - More conservative than minimum window, prevents immediate re-throttling
+ */
+export class ThrottlerExceptionHandler implements ExceptionHandler {
+  priority = 2.5;
+  name = 'ThrottlerExceptionHandler';
+
+  canHandle(exception: unknown): boolean {
+    return exception instanceof ThrottlerException;
+  }
+
+  handle(exception: unknown, correlationId: string): ErrorResponse {
+    const throttlerException = exception as ThrottlerException;
+
+    // Extract client identifier and request details from exception response
+    const response = throttlerException.getResponse();
+    const details = typeof response === 'object' && response
+      ? (response as Record<string, any>)
+      : {};
+
+    // Calculate retryAfter: use default throttler TTL (60s) for safe retry window
+    // This matches the longest rate limit window, ensuring all limits reset
+    const retryAfter = 60;
+
+    return createErrorResponse({
+      errorCode: ERROR_CODES.RATE_LIMIT_EXCEEDED,
+      message: 'API rate limit exceeded. Please reduce request frequency and try again.',
+      correlationId,
+      source: 'INTERNAL',
+      details: {
+        ...details,
+        retryAfter: retryAfter.toString(),
+      },
+    });
   }
 }
 
@@ -335,6 +383,7 @@ export class ExceptionHandlerRegistry {
   private static handlers: ExceptionHandler[] = [
     new BusinessExceptionHandler(),
     new ValidationExceptionHandler(),
+    new ThrottlerExceptionHandler(),
     new HttpExceptionHandler(),
     new ZodErrorHandler(),
     new TimeoutErrorHandler(),
@@ -423,6 +472,7 @@ export class ExceptionHandlerRegistry {
     this.handlers = [
       new BusinessExceptionHandler(),
       new ValidationExceptionHandler(),
+      new ThrottlerExceptionHandler(),
       new HttpExceptionHandler(),
       new ZodErrorHandler(),
       new TimeoutErrorHandler(),

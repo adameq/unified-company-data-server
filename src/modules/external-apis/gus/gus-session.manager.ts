@@ -71,6 +71,15 @@ export class GusSessionManager {
   private isRefreshing: boolean = false;
   private refreshPromise: Promise<GusSession> | null = null;
 
+  // Cooldown state tracking (thundering herd protection)
+  private lastFailureTime: Date | null = null;
+  private consecutiveFailures: number = 0;
+  private lastError: ErrorResponse | null = null;
+
+  // Cooldown configuration
+  private readonly BASE_COOLDOWN_MS = 1000; // 1 second
+  private readonly MAX_COOLDOWN_MS = 10000; // 10 seconds
+
   constructor(private readonly config: GusConfig) {}
 
   /**
@@ -102,17 +111,88 @@ export class GusSessionManager {
       return this.refreshPromise;
     }
 
+    // Check cooldown period (thundering herd protection)
+    if (this.isInCooldownPeriod()) {
+      const cooldownRemaining = this.calculateCooldownRemaining();
+
+      this.logger.warn('Session creation in cooldown period (fail fast)', {
+        correlationId,
+        consecutiveFailures: this.consecutiveFailures,
+        cooldownRemaining,
+        lastFailureTime: this.lastFailureTime,
+      });
+
+      // Fail fast with cached error to prevent overwhelming GUS login service
+      if (this.lastError) {
+        throw new BusinessException(this.lastError);
+      }
+
+      // Fallback error if lastError is somehow null (defensive programming)
+      throw new BusinessException(
+        createErrorResponse({
+          errorCode: 'GUS_SERVICE_UNAVAILABLE',
+          message: `GUS session creation in cooldown period. Please retry after ${cooldownRemaining}ms.`,
+          correlationId,
+          source: 'GUS',
+          details: {
+            consecutiveFailures: this.consecutiveFailures,
+            cooldownRemaining,
+          },
+        }),
+      );
+    }
+
     // Start new session refresh with locking
     this.isRefreshing = true;
     this.refreshPromise = this.createNewSession(correlationId)
       .then((session) => {
         this.isRefreshing = false;
         this.refreshPromise = null;
+
+        // Reset cooldown state on successful session creation
+        this.consecutiveFailures = 0;
+        this.lastFailureTime = null;
+        this.lastError = null;
+
         return session;
       })
       .catch((error) => {
         this.isRefreshing = false;
         this.refreshPromise = null;
+
+        // Track failure for cooldown exponential backoff
+        this.consecutiveFailures++;
+        this.lastFailureTime = new Date();
+
+        // Cache error for fail-fast pattern during cooldown
+        // Extract ErrorResponse from BusinessException if possible
+        if (error instanceof BusinessException) {
+          this.lastError = error.toErrorResponse();
+        } else if (
+          typeof error === 'object' &&
+          error !== null &&
+          'errorCode' in error
+        ) {
+          this.lastError = error as ErrorResponse;
+        } else {
+          // Fallback: Create generic ErrorResponse
+          this.lastError = createErrorResponse({
+            errorCode: 'GUS_AUTHENTICATION_FAILED',
+            message:
+              error instanceof Error
+                ? error.message
+                : 'Failed to create GUS session',
+            correlationId,
+            source: 'GUS',
+          });
+        }
+
+        this.logger.warn('Session creation failed, entering cooldown period', {
+          correlationId,
+          consecutiveFailures: this.consecutiveFailures,
+          nextCooldown: this.calculateCooldownRemaining(),
+        });
+
         throw error;
       });
 
@@ -127,6 +207,92 @@ export class GusSessionManager {
       return false;
     }
     return new Date() < this.currentSession.expiresAt;
+  }
+
+  /**
+   * Check if session creation is in cooldown period (thundering herd protection)
+   *
+   * Implements exponential backoff to prevent overwhelming GUS login service
+   * when session creation fails repeatedly.
+   *
+   * Backoff strategy:
+   * - Failure 1: 1 second cooldown
+   * - Failure 2: 2 seconds cooldown
+   * - Failure 3: 4 seconds cooldown
+   * - Failure 4: 8 seconds cooldown
+   * - Failure 5+: 10 seconds cooldown (capped at MAX_COOLDOWN_MS)
+   *
+   * @returns true if currently in cooldown period, false otherwise
+   */
+  private isInCooldownPeriod(): boolean {
+    if (this.lastFailureTime === null) {
+      return false;
+    }
+
+    // Calculate exponential backoff: BASE_COOLDOWN_MS * 2^(consecutiveFailures - 1)
+    const exponent = this.consecutiveFailures - 1;
+    const exponentialDelay = this.BASE_COOLDOWN_MS * Math.pow(2, exponent);
+    const cooldownDelay = Math.min(exponentialDelay, this.MAX_COOLDOWN_MS);
+
+    const cooldownEndsAt = new Date(
+      this.lastFailureTime.getTime() + cooldownDelay,
+    );
+    const now = new Date();
+
+    return now < cooldownEndsAt;
+  }
+
+  /**
+   * Calculate remaining cooldown time in milliseconds
+   *
+   * Used for error messages and logging to inform users how long they need to wait.
+   *
+   * @returns Remaining cooldown time in milliseconds, or 0 if not in cooldown
+   */
+  private calculateCooldownRemaining(): number {
+    if (this.lastFailureTime === null) {
+      return 0;
+    }
+
+    // Calculate exponential backoff: BASE_COOLDOWN_MS * 2^(consecutiveFailures - 1)
+    const exponent = this.consecutiveFailures - 1;
+    const exponentialDelay = this.BASE_COOLDOWN_MS * Math.pow(2, exponent);
+    const cooldownDelay = Math.min(exponentialDelay, this.MAX_COOLDOWN_MS);
+
+    const cooldownEndsAt = new Date(
+      this.lastFailureTime.getTime() + cooldownDelay,
+    );
+    const now = new Date();
+    const remaining = cooldownEndsAt.getTime() - now.getTime();
+
+    // Return 0 if cooldown has expired
+    return Math.max(0, remaining);
+  }
+
+  /**
+   * Reset cooldown state (manual intervention)
+   *
+   * Allows operators to manually reset the cooldown state when they know
+   * the GUS service is available again. This should be used carefully as
+   * it bypasses the exponential backoff protection.
+   *
+   * Use cases:
+   * - After GUS service maintenance window
+   * - After network/firewall issues are resolved
+   * - For testing/debugging purposes
+   */
+  resetCooldown(): void {
+    const hadCooldown = this.lastFailureTime !== null;
+
+    this.lastFailureTime = null;
+    this.consecutiveFailures = 0;
+    this.lastError = null;
+
+    if (hadCooldown) {
+      this.logger.log('Cooldown state manually reset', {
+        previousFailures: this.consecutiveFailures,
+      });
+    }
   }
 
   /**

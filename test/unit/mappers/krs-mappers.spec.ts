@@ -3,7 +3,8 @@
  * Tests the utility functions that map KRS API responses to standardized formats
  */
 
-import { KrsMappers, type KrsResponse } from '../../../src/modules/external-apis/krs/krs.service';
+import { KrsMappers } from '../../../src/modules/external-apis/krs/mappers/krs.mappers';
+import type { KrsResponse } from '../../../src/modules/external-apis/krs/schemas/krs-response.schema';
 
 describe('KRS Mappers', () => {
   // Mock KRS response data for testing

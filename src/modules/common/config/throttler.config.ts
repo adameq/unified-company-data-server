@@ -3,11 +3,14 @@ import { ConfigService } from '@nestjs/config';
 import {
   ThrottlerOptionsFactory,
   ThrottlerModuleOptions,
+  ThrottlerGuard,
+  ThrottlerException,
 } from '@nestjs/throttler';
 import { Request } from 'express';
 import { createHash } from 'crypto';
 import { type Environment } from '@config/environment.schema';
 import { extractBearerToken, maskApiKey } from '../utils/auth.utils';
+import { getThrottlerConfigsArray } from './throttler-limits.helper';
 
 /**
  * Hash API key for rate limiting identification
@@ -40,19 +43,12 @@ export class ThrottlerConfigService implements ThrottlerOptionsFactory {
     // Get rate limit from environment (requests per minute)
     const rateLimitPerMinute = this.configService.get('APP_RATE_LIMIT_PER_MINUTE', { infer: true });
 
+    // Use centralized helper to calculate throttler limits
+    // This ensures consistency across production, tests, and test configuration
+    const throttlers = getThrottlerConfigsArray(rateLimitPerMinute);
+
     return {
-      throttlers: [
-        {
-          name: 'default',
-          ttl: 60 * 1000, // 1 minute in milliseconds
-          limit: rateLimitPerMinute,
-        },
-        {
-          name: 'burst', // Allow short bursts but with stricter overall limit
-          ttl: 10 * 1000, // 10 seconds
-          limit: Math.min(10, Math.floor(rateLimitPerMinute / 6)), // Max 10 requests per 10 seconds
-        },
-      ],
+      throttlers,
       // Storage configuration for distributed systems
       storage: undefined, // Use in-memory storage for single instance, Redis for distributed
 
@@ -118,42 +114,37 @@ export class ThrottlerConfigService implements ThrottlerOptionsFactory {
 }
 
 /**
- * Custom throttler guard with enhanced error responses
+ * Custom throttler guard with clean separation of concerns
+ *
+ * Responsibilities:
+ * - Rate limit enforcement (control access)
+ * - Client identification (API key or IP)
+ *
+ * NOT responsible for:
+ * - Error response formatting (handled by ThrottlerExceptionHandler)
+ * - RetryAfter calculation (handled by ThrottlerExceptionHandler)
+ *
+ * This follows Single Responsibility Principle and enables
+ * centralized error response management via GlobalExceptionFilter.
  */
-import { ThrottlerGuard } from '@nestjs/throttler';
-import { Injectable as GuardInjectable } from '@nestjs/common';
-import { BusinessException } from '@common/exceptions/business-exceptions';
-
-@GuardInjectable()
+@Injectable()
 export class CustomThrottlerGuard extends ThrottlerGuard {
   protected async throwThrottlingException(
     context: ExecutionContext,
   ): Promise<void> {
     const request = context.switchToHttp().getRequest<Request>();
-
-    // Extract correlation ID from headers (string | string[] → string)
-    const correlationIdHeader = request.headers['correlation-id'] || request.headers['x-correlation-id'];
-    const correlationId = Array.isArray(correlationIdHeader)
-      ? correlationIdHeader[0]
-      : correlationIdHeader || `rate-limit-${Date.now()}`;
-
     const apiKey = extractBearerToken(request);
 
-    throw new BusinessException({
-      errorCode: 'RATE_LIMIT_EXCEEDED',
-      message:
-        'API rate limit exceeded. Please reduce request frequency and try again.',
-      correlationId,
-      source: 'INTERNAL',
-      details: {
-        clientIdentifier: apiKey
-          ? maskApiKey(apiKey)
-          : request.ip,
-        path: request.path,
-        method: request.method,
-        retryAfter: '60', // Suggest retry after 60 seconds
-      },
-    });
+    // Throw standard ThrottlerException with request context
+    // ThrottlerExceptionHandler will convert to business ErrorResponse
+    const exception = new ThrottlerException();
+
+    // Attach request context to exception response for handler
+    (exception as any).clientIdentifier = apiKey ? maskApiKey(apiKey) : request.ip;
+    (exception as any).path = request.path;
+    (exception as any).method = request.method;
+
+    throw exception;
   }
 
   protected async getTracker(req: Request): Promise<string> {

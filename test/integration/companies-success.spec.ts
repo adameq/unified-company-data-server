@@ -1,6 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 const request = require('supertest');
 import { createTestApp, closeTestApp } from '../helpers/test-app-setup';
+import { TEST_NIPS } from '../fixtures/test-nips';
 
 /**
  * T011: Integration test for successful NIP lookup
@@ -37,13 +38,13 @@ describe('Integration Tests - Successful Company Lookup', () => {
       const response = await request(app.getHttpServer())
         .post('/api/companies')
         .set('Authorization', `Bearer ${validApiKey}`)
-        .send({ nip: '5260250995' }) // Real NIP: Orange Polska S.A.
+        .send({ nip: TEST_NIPS.VALID_LEGAL_ENTITY }) // Test NIP: PKN Orlen (from GUS test database 2014)
         .expect(200);
 
       const responseTime = Date.now() - startTime;
 
       // Verify response structure matches OpenAPI spec
-      expect(response.body).toHaveProperty('nip', '5260250995');
+      expect(response.body).toHaveProperty('nip', TEST_NIPS.VALID_LEGAL_ENTITY);
       expect(response.body).toHaveProperty('nazwa');
       expect(response.body).toHaveProperty('adres');
       expect(response.body).toHaveProperty('status');
@@ -66,9 +67,9 @@ describe('Integration Tests - Successful Company Lookup', () => {
     });
 
     it('should handle different company types correctly', async () => {
-      // Test with real NIP that exists in GUS system
+      // Test with NIP from GUS test environment (2014 database snapshot)
       const testCases = [
-        { nip: '5260250995', expectedSource: ['KRS', 'CEIDG', 'GUS'] }, // Orange Polska S.A.
+        { nip: TEST_NIPS.VALID_LEGAL_ENTITY, expectedSource: ['KRS', 'CEIDG', 'GUS'] }, // PKN Orlen
       ];
 
       for (const testCase of testCases) {
@@ -96,7 +97,7 @@ describe('Integration Tests - Successful Company Lookup', () => {
         .post('/api/companies')
         .set('Authorization', `Bearer ${validApiKey}`)
         .set('correlation-id', customCorrelationId)
-        .send({ nip: '5260250995' }) // Real NIP: Orange Polska S.A.
+        .send({ nip: TEST_NIPS.VALID_LEGAL_ENTITY }) // Test NIP: PKN Orlen (from GUS test database 2014)
         .expect(200);
 
       // Verify the response is properly structured
@@ -111,7 +112,7 @@ describe('Integration Tests - Successful Company Lookup', () => {
       // Test concurrent requests using the same real NIP
       // This verifies that the system can handle parallel requests properly
       const concurrentRequests = 5;
-      const testNip = '5260250995'; // Real NIP: Orange Polska S.A.
+      const testNip = TEST_NIPS.VALID_LEGAL_ENTITY; // Test NIP: PKN Orlen (from GUS test database 2014)
 
       const requests = Array.from({ length: concurrentRequests }, () =>
         request(app.getHttpServer())
@@ -153,7 +154,7 @@ describe('Integration Tests - Successful Company Lookup', () => {
         const response = await request(app.getHttpServer())
           .post('/api/companies')
           .set('Authorization', `Bearer ${validApiKey}`)
-          .send({ nip: '5260250995' }) // Real NIP: Orange Polska S.A.
+          .send({ nip: TEST_NIPS.VALID_LEGAL_ENTITY }) // Test NIP: PKN Orlen (from GUS test database 2014)
           .expect(200);
 
         responses.push(response.body);
@@ -175,7 +176,7 @@ describe('Integration Tests - Successful Company Lookup', () => {
       const response = await request(app.getHttpServer())
         .post('/api/companies')
         .set('Authorization', `Bearer ${validApiKey}`)
-        .send({ nip: '5260250995' }) // Real NIP: Orange Polska S.A.
+        .send({ nip: TEST_NIPS.VALID_LEGAL_ENTITY }) // Test NIP: PKN Orlen (from GUS test database 2014)
         .expect(200);
 
       // Required fields must be present
@@ -213,7 +214,7 @@ describe('Integration Tests - Successful Company Lookup', () => {
       const response = await request(app.getHttpServer())
         .post('/api/companies')
         .set('Authorization', `Bearer ${validApiKey}`)
-        .send({ nip: '5260250995' }) // Real NIP: Orange Polska S.A.
+        .send({ nip: TEST_NIPS.VALID_LEGAL_ENTITY }) // Test NIP: PKN Orlen (from GUS test database 2014)
         .expect((res: any) => {
           // Accept both 200 (successful GUS-only response) and other valid responses
           // The key is that we should NOT get 502 Bad Gateway
@@ -243,7 +244,7 @@ describe('Integration Tests - Successful Company Lookup', () => {
       const response = await request(app.getHttpServer())
         .post('/api/companies')
         .set('Authorization', `Bearer ${validApiKey}`)
-        .send({ nip: '5260250995' }) // Real NIP: Orange Polska S.A.
+        .send({ nip: TEST_NIPS.VALID_LEGAL_ENTITY }) // Test NIP: PKN Orlen (from GUS test database 2014)
         .expect((res: any) => {
           // Should either succeed (200) or fail with a proper error (not a crash)
           expect([200, 404, 502]).toContain(res.status);

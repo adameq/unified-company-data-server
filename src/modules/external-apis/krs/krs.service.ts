@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
-import { z } from 'zod';
 import {
   createErrorResponse,
   type ErrorResponse,
@@ -10,7 +9,15 @@ import {
 import { type Environment } from '@config/environment.schema';
 import { BusinessException } from '@common/exceptions/business-exceptions';
 import { AxiosErrorHandler } from '@common/handlers/axios-error.handler';
+import { createAxiosLoggingInterceptors } from '@common/interceptors/axios-logging.interceptor';
 import { isAxiosError } from '@common/utils/error-detection.utils';
+import {
+  KrsResponseSchema,
+  type KrsResponse,
+  type KrsEntityData,
+  type KrsAddress,
+} from './schemas/krs-response.schema';
+import { KrsMappers } from './mappers/krs.mappers';
 
 /**
  * KRS REST Service for Polish Court Register API
@@ -39,100 +46,6 @@ import { isAxiosError } from '@common/utils/error-detection.utils';
  * - Structured logging with correlation IDs
  * - Timeout and retry handling via state machines
  */
-
-// KRS API response schemas for validation
-const KrsAddressSchema = z.object({
-  kodPocztowy: z.string().regex(/^\d{2}-\d{3}$/),
-  miejscowosc: z.string(),
-  ulica: z.string().optional(),
-  nrDomu: z.string().optional(),
-  nrLokalu: z.string().optional(),
-});
-
-const KrsEntityDataSchema = z.object({
-  formaPrawna: z.string(),
-  identyfikatory: z.object({
-    nip: z.string().regex(/^\d{10}$/),
-    regon: z.string(),
-  }),
-  nazwa: z.string(),
-  dataWykreslenia: z.string().nullable().optional(),
-  czyPosiadaStatusOPP: z.boolean().optional(),
-});
-
-const KrsSeatAddressSchema = z.object({
-  siedziba: z.object({
-    kraj: z.string(),
-    wojewodztwo: z.string(),
-    powiat: z.string(),
-    gmina: z.string(),
-    miejscowosc: z.string(),
-  }),
-  adres: KrsAddressSchema,
-});
-
-const KrsPartnerSchema = z.object({
-  nazwa: z.string(),
-  adres: z.string(),
-});
-
-const KrsSection1Schema = z.object({
-  danePodmiotu: KrsEntityDataSchema,
-  siedzibaIAdres: KrsSeatAddressSchema.optional(),
-});
-
-const KrsSection2Schema = z.object({
-  wspolnicy: z.array(KrsPartnerSchema).optional(),
-});
-
-// Dzial 6 schemas for bankruptcy and liquidation status (per dokumentacja.md section 3)
-const KrsLiquidationSchema = z
-  .object({
-    dataRozpoczecia: z.string().optional(),
-    // Other fields exist but we only need to detect presence
-  })
-  .passthrough(); // Allow additional fields we don't need to validate
-
-const KrsBankruptcySchema = z
-  .object({
-    dataPostanowienia: z.string().optional(),
-    // Other fields exist but we only need to detect presence
-  })
-  .passthrough();
-
-const KrsSection6Schema = z
-  .object({
-    likwidacja: z.array(KrsLiquidationSchema).optional(),
-    postepowanieUpadlosciowe: z.array(KrsBankruptcySchema).optional(),
-  })
-  .optional();
-
-const KrsDataSchema = z.object({
-  dzial1: KrsSection1Schema,
-  dzial2: KrsSection2Schema.optional(),
-  dzial6: KrsSection6Schema.optional(),
-});
-
-const KrsHeaderSchema = z.object({
-  rejestr: z.string(),
-  numerKRS: z.string(),
-  stanZDnia: z.string(),
-  dataRejestracjiWKRS: z.string().optional(),
-  stanPozycji: z.number().optional(), // Entity status: 1=active, 3=deleted but visible, 4=deleted
-});
-
-export const KrsResponseSchema = z.object({
-  odpis: z.object({
-    rodzaj: z.string(),
-    dane: KrsDataSchema,
-    naglowekA: KrsHeaderSchema,
-  }),
-});
-
-// Types inferred from schemas
-export type KrsResponse = z.infer<typeof KrsResponseSchema>;
-export type KrsEntityData = z.infer<typeof KrsEntityDataSchema>;
-export type KrsAddress = z.infer<typeof KrsAddressSchema>;
 
 // KRS service configuration
 interface KrsConfig {
@@ -178,19 +91,12 @@ export class KrsService {
       },
     });
 
-    // Add response interceptor for logging
-    this.httpClient.interceptors.response.use(
-      (response) => response,
-      (error) => {
-        this.logger.error('KRS API error', {
-          status: error.response?.status,
-          statusText: error.response?.statusText,
-          url: error.config?.url,
-          method: error.config?.method,
-        });
-        return Promise.reject(error);
-      },
-    );
+    // Add unified axios logging interceptors (request + response)
+    // Provides consistent logging across all REST API services
+    const { requestInterceptor, responseInterceptor } =
+      createAxiosLoggingInterceptors('KRS', this.logger);
+    this.httpClient.interceptors.request.use(...requestInterceptor);
+    this.httpClient.interceptors.response.use(...responseInterceptor);
   }
 
   /**
@@ -499,38 +405,3 @@ export class KrsService {
     }
   }
 }
-
-// Utility functions for data mapping
-export const KrsMappers = {
-  /**
-   * Extract basic company information from KRS response
-   */
-  extractBasicInfo: (krsResponse: KrsResponse) => {
-    const entity = krsResponse.odpis.dane.dzial1.danePodmiotu;
-    const address = krsResponse.odpis.dane.dzial1.siedzibaIAdres?.adres;
-
-    return {
-      nazwa: entity.nazwa,
-      nip: entity.identyfikatory.nip || undefined,
-      regon: entity.identyfikatory.regon,
-      krs: krsResponse.odpis.naglowekA.numerKRS,
-      adres: address
-        ? {
-            miejscowosc: address.miejscowosc,
-            kodPocztowy: address.kodPocztowy,
-            ulica: address.ulica,
-            numerBudynku: address.nrDomu,
-            numerLokalu: address.nrLokalu,
-          }
-        : undefined,
-      dataStanu: krsResponse.odpis.naglowekA.stanZDnia,
-    };
-  },
-
-  /**
-   * Extract partners/shareholders from KRS data
-   */
-  extractPartners: (krsResponse: KrsResponse) => {
-    return krsResponse.odpis.dane.dzial2?.wspolnicy || [];
-  },
-};

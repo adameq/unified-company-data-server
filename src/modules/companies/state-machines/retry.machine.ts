@@ -48,7 +48,7 @@ const RetryContextSchema = z.object({
       code: z.string().optional(),
       errorCode: z.string().optional(),  // For ErrorResponse compatibility
       source: z.string().optional(),
-      timestamp: z.date(),
+      timestamp: z.string().datetime(),  // ISO 8601 format
     })
     .optional(),
   result: z.any().optional(),
@@ -215,7 +215,7 @@ export const createRetryMachine = (
             code: errorCode,  // For internal use
             errorCode,  // For compatibility with ErrorResponse schema
             source: error.source, // Preserve source from BusinessException
-            timestamp: new Date(),
+            timestamp: new Date().toISOString(),
           },
         };
       }),

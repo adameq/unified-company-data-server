@@ -1,3 +1,4 @@
+import { Injectable } from '@nestjs/common';
 import { RetryStrategy } from '../retry-strategy.interface';
 
 /**
@@ -26,6 +27,7 @@ import { RetryStrategy } from '../retry-strategy.interface';
  * Session management is handled by GusSessionManager, which automatically
  * refreshes sessions before retry attempts.
  */
+@Injectable()
 export class GusRetryStrategy implements RetryStrategy {
   readonly name = 'GUS';
 

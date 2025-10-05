@@ -7,6 +7,8 @@ import {
 } from '@nestjs/terminus';
 import { OrchestrationService } from '../services/orchestration.service';
 import { Public } from '@modules/common/decorators/public.decorator';
+import { BusinessException } from '@common/exceptions/business-exceptions';
+import { createErrorResponse } from '@schemas/error-response.schema';
 
 /**
  * Health Controller - System health check endpoints
@@ -88,54 +90,59 @@ export class HealthController {
   @ApiResponse({
     status: 503,
     description: 'Application is not ready - external services unavailable',
-    type: 'ReadinessResponse',
+    schema: {
+      type: 'object',
+      properties: {
+        errorCode: { type: 'string', example: 'SERVICE_DEGRADED' },
+        message: { type: 'string' },
+        correlationId: { type: 'string' },
+        source: { type: 'string' },
+        timestamp: { type: 'string', format: 'date-time' },
+        details: { type: 'object' },
+      },
+    },
   })
   async getReadiness(): Promise<ReadinessResponse> {
     const correlationId = `health-${Date.now()}`;
     const basicHealth = this.getHealth();
 
-    try {
-      // Check external service dependencies (now async)
-      const serviceCheck = await this.orchestrationService.healthCheck();
+    // Check external service dependencies
+    const serviceCheck = await this.orchestrationService.healthCheck();
 
-      const response: ReadinessResponse = {
-        ...basicHealth,
-        status: serviceCheck.status as 'healthy' | 'degraded',
-        services: serviceCheck.services,
-        dependencies: {
-          gus: serviceCheck.services.gus || 'unknown',
-          krs: serviceCheck.services.krs || 'unknown',
-          ceidg: serviceCheck.services.ceidg || 'unknown',
-        },
-      };
+    const response: ReadinessResponse = {
+      ...basicHealth,
+      status: serviceCheck.status as 'healthy' | 'degraded',
+      services: serviceCheck.services,
+      dependencies: {
+        gus: serviceCheck.services.gus || 'unknown',
+        krs: serviceCheck.services.krs || 'unknown',
+        ceidg: serviceCheck.services.ceidg || 'unknown',
+      },
+    };
 
-      if (response.status !== 'healthy') {
-        this.logger.warn('Service health check returned degraded status', {
-          correlationId,
-          services: response.services,
-        });
-      }
-
-      return response;
-    } catch (error) {
-      this.logger.error('Health check failed', {
+    // If services are degraded or unhealthy, throw BusinessException
+    // GlobalExceptionFilter will handle formatting the response
+    if (response.status === 'degraded') {
+      this.logger.warn('Service health check returned degraded status', {
         correlationId,
-        error: error instanceof Error ? error.message : String(error),
+        services: response.services,
       });
 
-      return {
-        ...basicHealth,
-        status: 'unhealthy',
-        services: {
-          error: 'Health check failed',
-        },
-        dependencies: {
-          gus: 'error',
-          krs: 'error',
-          ceidg: 'error',
-        },
-      };
+      throw new BusinessException(
+        createErrorResponse({
+          errorCode: 'SERVICE_DEGRADED',
+          message: 'One or more external services are unavailable',
+          correlationId,
+          source: 'INTERNAL',
+          details: {
+            services: response.services,
+            dependencies: response.dependencies,
+          },
+        }),
+      );
     }
+
+    return response;
   }
 
   @Public()

@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
-import { z } from 'zod';
 import {
   createErrorResponse,
   type ErrorResponse,
@@ -10,7 +9,14 @@ import {
 import { type Environment } from '@config/environment.schema';
 import { BusinessException } from '@common/exceptions/business-exceptions';
 import { AxiosErrorHandler } from '@common/handlers/axios-error.handler';
+import { createAxiosLoggingInterceptors } from '@common/interceptors/axios-logging.interceptor';
 import { isAxiosError } from '@common/utils/error-detection.utils';
+import {
+  CeidgResponseSchema,
+  type CeidgResponse,
+  type CeidgCompany,
+  type CeidgAddress,
+} from './schemas/ceidg-response.schema';
 
 /**
  * CEIDG v3 REST Service for Polish Individual Entrepreneurs Registry
@@ -35,92 +41,6 @@ import { isAxiosError } from '@common/utils/error-detection.utils';
  * - Structured logging with correlation IDs
  * - Timeout and retry handling via state machines
  */
-
-// CEIDG API response schemas for validation
-const CeidgAddressSchema = z.object({
-  miasto: z.string(),
-  kod: z.string().regex(/^\d{2}-\d{3}$/),
-  ulica: z.string().optional(),
-  budynek: z.string().optional(),
-  lokal: z.string().optional(),
-  gmina: z.string().optional(),
-  powiat: z.string().optional(),
-  wojewodztwo: z.string().optional(),
-  kraj: z.string().optional(),
-  terc: z.string().optional(),
-  simc: z.string().optional(),
-  ulic: z.string().optional(),
-});
-
-const CeidgOwnerSchema = z.object({
-  imie: z.string().optional(),
-  nazwisko: z.string().optional(),
-  nip: z.string().regex(/^\d{10}$/),
-  regon: z.string().optional(),
-});
-
-export const CeidgCompanySchema = z.object({
-  id: z.string().uuid(),
-  nazwa: z.string(),
-  wlasciciel: CeidgOwnerSchema,
-  status: z.enum([
-    'AKTYWNY',
-    'WYKRESLONY',
-    'ZAWIESZONY',
-    'OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI',
-    'WYLACZNIE_W_FORMIE_SPOLKI',
-  ]),
-  dataRozpoczecia: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format')
-    .refine(
-      (val) => !isNaN(Date.parse(val)),
-      { message: 'Must be a valid date (e.g., 2023-02-30 is invalid)' }
-    )
-    .describe('Company start date in YYYY-MM-DD format'),
-  dataZakonczenia: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format')
-    .refine(
-      (val) => !isNaN(Date.parse(val)),
-      { message: 'Must be a valid date (e.g., 2023-02-30 is invalid)' }
-    )
-    .optional()
-    .describe('Company end date in YYYY-MM-DD format (if deregistered)'),
-  adresDzialalnosci: CeidgAddressSchema,
-  adresKorespondencyjny: CeidgAddressSchema.optional(),
-  link: z.string().url().optional(),
-});
-
-const CeidgLinksSchema = z.object({
-  first: z.string().optional(),
-  last: z.string().optional(),
-  prev: z.string().optional(),
-  next: z.string().optional(),
-  self: z.string().optional(),
-});
-
-const CeidgPropertiesSchema = z
-  .object({
-    'dc:title': z.string().optional(),
-    'dc:description': z.string().optional(),
-    'dc:language': z.string().optional(),
-    'schema:provider': z.string().optional(),
-    'schema:datePublished': z.string().optional(),
-  })
-  .passthrough();
-
-const CeidgResponseSchema = z.object({
-  firmy: z.array(CeidgCompanySchema),
-  count: z.number(),
-  links: CeidgLinksSchema,
-  properties: CeidgPropertiesSchema.optional(),
-});
-
-// Types inferred from schemas
-export type CeidgResponse = z.infer<typeof CeidgResponseSchema>;
-export type CeidgCompany = z.infer<typeof CeidgCompanySchema>;
-export type CeidgAddress = z.infer<typeof CeidgAddressSchema>;
 
 // CEIDG service configuration
 interface CeidgConfig {
@@ -172,45 +92,15 @@ export class CeidgV3Service {
       },
     });
 
-    // Add request interceptor for debugging
-    this.httpClient.interceptors.request.use(
-      (config) => {
-        const authHeader = config.headers?.Authorization as string;
-        this.logger.debug('CEIDG request interceptor', {
-          url: config.url,
-          baseURL: config.baseURL,
-          params: config.params,
-          authHeaderPresent: !!authHeader,
-          authHeaderFormat: authHeader?.startsWith('Bearer ') ? 'Bearer token' : 'other',
-        });
-        return config;
-      },
-      (error) => Promise.reject(error),
-    );
-
-    // Add response interceptor for logging and error handling
-    this.httpClient.interceptors.response.use(
-      (response) => response,
-      (error: unknown) => {
-        const errorObj = error as {
-          response?: { status?: number; statusText?: string };
-          config?: {
-            url?: string;
-            method?: string;
-            headers?: Record<string, unknown>;
-          };
-        };
-        this.logger.error('CEIDG API error', {
-          status: errorObj.response?.status,
-          statusText: errorObj.response?.statusText,
-          url: errorObj.config?.url,
-          method: errorObj.config?.method,
-          correlationId: errorObj.config?.headers?.['X-Correlation-ID'],
-        });
-        // Preserve original error with response.status for proper error handling
-        return Promise.reject(error);
-      },
-    );
+    // Add unified axios logging interceptors (request + response)
+    // Provides consistent logging across all REST API services
+    // Authorization header is masked to prevent token leakage in logs
+    const { requestInterceptor, responseInterceptor } =
+      createAxiosLoggingInterceptors('CEIDG', this.logger, {
+        maskHeaders: ['Authorization'],
+      });
+    this.httpClient.interceptors.request.use(...requestInterceptor);
+    this.httpClient.interceptors.response.use(...responseInterceptor);
   }
 
 

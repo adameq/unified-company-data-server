@@ -25,7 +25,7 @@ import { Request } from 'express';
  */
 export function generateCorrelationId(): string {
   const timestamp = Date.now().toString(36);
-  const random = Math.random().toString(36).substr(2, 9);
+  const random = Math.random().toString(36).slice(2, 11);
   return `req-${timestamp}-${random}`;
 }
 

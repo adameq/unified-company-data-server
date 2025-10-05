@@ -6,8 +6,8 @@ import {
   GusLegalPersonReportSchema,
   GusPhysicalPersonReportSchema,
 } from '../modules/external-apis/gus/validators/gus-response.validator';
-import { KrsResponseSchema } from '../modules/external-apis/krs/krs.service';
-import { CeidgCompanySchema } from '../modules/external-apis/ceidg/ceidg-v3.service';
+import { KrsResponseSchema } from '../modules/external-apis/krs/schemas/krs-response.schema';
+import { CeidgCompanySchema } from '../modules/external-apis/ceidg/schemas/ceidg-response.schema';
 
 /**
  * Zod schema for internal state management for XState orchestration machine
@@ -65,9 +65,10 @@ const LastErrorSchema = z.object({
     .describe('Original error object for logging'),
 
   timestamp: z
-    .date()
-    .default(() => new Date())
-    .describe('When the error occurred'),
+    .string()
+    .datetime()
+    .default(() => new Date().toISOString())
+    .describe('When the error occurred (ISO 8601 format)'),
 });
 
 // Retry count tracking schema
@@ -279,7 +280,7 @@ export const ContextUpdaters = {
       ...context,
       lastError: {
         ...error,
-        timestamp: new Date(),
+        timestamp: new Date().toISOString(),
       },
     });
   },

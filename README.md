@@ -1,98 +1,351 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Unified Company Data Server
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+> NestJS microservice orchestrating data retrieval from Polish government APIs (GUS, KRS, CEIDG) to provide unified company information using NIP numbers.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## 🚀 Features
 
-## Description
+- **API Orchestration**: XState v5 state machines with exponential backoff retry logic
+- **Real-time Integration**: Live data from GUS (SOAP), KRS (REST), CEIDG (REST)
+- **Production-Ready**: API key authentication, rate limiting, health checks (@nestjs/terminus)
+- **Type-Safe**: Zod validation at all boundaries, TypeScript strict mode
+- **Comprehensive Testing**: 36+ integration tests covering success, error, timeout, and retry scenarios
+- **Documented**: Swagger/OpenAPI integration
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## 📋 Prerequisites
 
-## Project setup
+- Node.js 18+
+- pnpm (package manager)
+- GUS API key (20+ chars) - for production
+- CEIDG JWT token (50+ chars) - for production
+
+## 🔧 Quick Start
+
+### 1. Installation
 
 ```bash
-$ pnpm install
+pnpm install
 ```
 
-## Compile and run the project
+### 2. Environment Setup
+
+Create `.env` file:
 
 ```bash
-# development
-$ pnpm run start
+# Required
+GUS_USER_KEY=your_gus_api_key_here
+CEIDG_JWT_TOKEN=your_ceidg_jwt_token_here
+APP_API_KEYS=dev-key-123,dev-key-456  # Comma-separated
 
-# watch mode
-$ pnpm run start:dev
-
-# production mode
-$ pnpm run start:prod
+# Optional (defaults shown)
+PORT=3000
+NODE_ENV=development
+APP_EXTERNAL_API_TIMEOUT=5000
 ```
 
-## Run tests
+**Full environment variables list**: See [Development Guide](`.claude/development-guide.md#environment-configuration`)
+
+### 3. Run Development Server
 
 ```bash
-# unit tests
-$ pnpm run test
-
-# e2e tests
-$ pnpm run test:e2e
-
-# test coverage
-$ pnpm run test:cov
+pnpm start:dev
+# Server: http://localhost:3000
+# Swagger: http://localhost:3000/api
 ```
 
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+### 4. Test API
 
 ```bash
-$ pnpm install -g @nestjs/mau
-$ mau deploy
+curl -X POST http://localhost:3000/api/companies \
+  -H "Authorization: Bearer dev-key-123" \
+  -H "Content-Type: application/json" \
+  -d '{"nip": "5260250995"}'
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+---
 
-## Resources
+## 📚 API Endpoints
 
-Check out a few resources that may come in handy when working with NestJS:
+### Company Data
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+**POST /api/companies**
 
-## Support
+Retrieve unified company data by NIP.
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+**Request:**
+```json
+{
+  "nip": "5260250995"
+}
+```
 
-## Stay in touch
+**Response (200 OK):**
+```json
+{
+  "nip": "5260250995",
+  "nazwa": "Orange Polska Spółka Akcyjna",
+  "adres": {
+    "wojewodztwo": "mazowieckie",
+    "miejscowosc": "Warszawa",
+    "kodPocztowy": "02-326",
+    "ulica": "ul. Obrzeżna",
+    "numerBudynku": "7"
+  },
+  "status": "AKTYWNY",
+  "isActive": true,
+  "dataRozpoczeciaDzialalnosci": "1991-12-18",
+  "zrodloDanych": "GUS"
+}
+```
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+**Error Codes:**
+- `INVALID_NIP_FORMAT` (400) - Invalid NIP format
+- `ENTITY_NOT_FOUND` (404) - Company not found
+- `RATE_LIMIT_EXCEEDED` (429) - Too many requests
+- `INTERNAL_SERVER_ERROR` (500) - System fault
 
-## License
+**Full API Reference**: [`.claude/api-reference.md`](.claude/api-reference.md)
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+### Health Checks
+
+- `GET /api/health` - Basic health check
+- `GET /api/health/live` - Liveness probe (Kubernetes)
+- `GET /api/health/ready` - Readiness probe (checks external services)
+- `GET /api/health/metrics` - Terminus health indicators (memory, process)
+
+---
+
+## 🧪 Testing
+
+```bash
+# All integration tests
+pnpm test:integration
+
+# Specific scenarios
+pnpm test test/integration/companies-success.spec.ts
+pnpm test test/integration/companies-errors.spec.ts
+```
+
+**Test Coverage**: 36+ integration tests (success, errors, timeout, retry)
+
+**See**: [`.claude/testing-guide.md`](.claude/testing-guide.md) for detailed testing strategies.
+
+---
+
+## 🏗️ Project Structure
+
+```
+src/
+├── main.ts                    # Application entry point
+├── config/
+│   └── environment.schema.ts  # Zod environment validation
+├── modules/
+│   ├── companies/             # Main business logic
+│   │   ├── controllers/       # REST endpoints
+│   │   ├── services/          # Orchestration service
+│   │   └── state-machines/    # XState orchestration + retry
+│   └── external-apis/         # API adapters
+│       ├── gus/               # GUS SOAP service
+│       ├── krs/               # KRS REST service
+│       └── ceidg/             # CEIDG REST service
+└── schemas/                   # Zod validation schemas
+```
+
+**Full Architecture**: [`.claude/architecture.md`](.claude/architecture.md)
+
+---
+
+## 📖 Documentation
+
+- **Architecture**: [`.claude/architecture.md`](.claude/architecture.md) - State machines, retry logic, security
+- **API Reference**: [`.claude/api-reference.md`](.claude/api-reference.md) - Endpoints, examples, error codes
+- **Development Guide**: [`.claude/development-guide.md`](.claude/development-guide.md) - Patterns, validation, troubleshooting
+- **Testing Guide**: [`.claude/testing-guide.md`](.claude/testing-guide.md) - Test strategies, fixtures
+
+---
+
+## 🔑 Environment Variables
+
+### Required
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `GUS_USER_KEY` | GUS SOAP API key (20+ chars) | `d235b29b4a284c3d89ab` |
+| `CEIDG_JWT_TOKEN` | CEIDG v3 API JWT (50+ chars) | `eyJhbGciOiJIUzI1...` |
+| `APP_API_KEYS` | Comma-separated API keys (32+ chars each) | `key1,key2,key3` |
+
+### Optional (Performance)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | 3000 | Server port |
+| `NODE_ENV` | development | Environment (development/test/production) |
+| `APP_REQUEST_TIMEOUT` | 15000 | Request timeout (ms) |
+| `APP_EXTERNAL_API_TIMEOUT` | 5000 | External API timeout (ms) |
+| `GUS_MAX_RETRIES` | 2 | Max retries for GUS |
+| `KRS_MAX_RETRIES` | 2 | Max retries for KRS |
+| `CEIDG_MAX_RETRIES` | 2 | Max retries for CEIDG |
+
+### Optional (Security)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `APP_CORS_ALLOWED_ORIGINS` | `http://localhost:3000,http://localhost:5173` | Comma-separated CORS origins |
+| `APP_ENABLE_HELMET` | true | Enable Helmet security headers |
+| `APP_RATE_LIMIT_PER_MINUTE` | 100 | Rate limit per API key |
+
+**Full list**: [`.claude/development-guide.md#environment-configuration`](.claude/development-guide.md#environment-configuration)
+
+---
+
+## 🛠️ Development
+
+### Commands
+
+```bash
+# Start development server
+pnpm start:dev
+
+# Run tests
+pnpm test:integration
+
+# TypeScript check
+pnpm exec tsc --noEmit
+
+# Build for production
+pnpm build
+pnpm start
+```
+
+### Code Style
+
+- **Path Aliases**: Use `@schemas`, `@common`, `@config` for imports
+- **Type Safety**: No `any` types, strict TypeScript mode
+- **Error Handling**: Always use `BusinessException` for business errors
+- **Configuration-Driven**: Prefer declarative configs over imperative code
+
+**See**: [`.claude/development-guide.md`](.claude/development-guide.md) for detailed guidelines.
+
+---
+
+## 🔐 Security
+
+### Authentication
+
+All endpoints (except health checks) require API key authentication:
+
+```bash
+curl -H "Authorization: Bearer your-api-key-here" \
+  http://localhost:3000/api/companies
+```
+
+### Rate Limiting
+
+- **Production**: 100 requests/minute per API key (configurable)
+- **Development/Test**: Disabled for unlimited testing
+
+### Security Headers
+
+Helmet.js enabled by default with:
+- Content Security Policy (CSP)
+- Strict Transport Security (HSTS)
+- XSS Protection
+- MIME Sniffing Prevention
+
+---
+
+## 🤝 Contributing
+
+### Development Workflow
+
+1. Create a feature branch
+2. Make changes with tests
+3. Run `pnpm exec tsc --noEmit` (type check)
+4. Run `pnpm test:integration` (tests)
+5. Submit pull request
+
+### Code Guidelines
+
+- Follow existing code style
+- Write integration tests for new endpoints
+- Update documentation for API changes
+- Use meaningful commit messages
+
+**See**: [`.claude/development-guide.md#code-style-and-best-practices`](.claude/development-guide.md#code-style-and-best-practices)
+
+---
+
+## 📊 Architecture Highlights
+
+### State Machines (XState v5)
+
+The application uses XState v5 for orchestration with:
+- Centralized retry strategy with exponential backoff
+- Per-service retry configurations (GUS, KRS, CEIDG)
+- Automatic correlation ID tracking
+- Type-safe state management
+
+### Retry Architecture
+
+| Service | Max Retries | Initial Delay | Retry Conditions |
+|---------|-------------|---------------|------------------|
+| **GUS** | 2 | 100ms | 5xx errors, session errors |
+| **KRS** | 2 | 200ms | 5xx errors only |
+| **CEIDG** | 2 | 150ms | 5xx errors only |
+
+**Non-retryable**: 404 Not Found, 400 Bad Request, 401 Unauthorized, 429 Rate Limit
+
+### HTTP Client
+
+Uses **axios directly** (not `@nestjs/axios`) for:
+- Per-service configuration (baseURL, headers, timeouts)
+- Service-specific interceptors
+- Promise pattern consistency
+- Transitional timeout error detection
+
+**Why?** See [`.claude/architecture.md#http-client-architecture`](.claude/architecture.md#http-client-architecture)
+
+---
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+1. **Environment validation fails** → Check required env vars in `.env`
+2. **Tests timeout** → Ensure `NODE_ENV=development` is set
+3. **Module resolution errors** → Verify path aliases in `tsconfig.json`
+4. **Port already in use** → Check if another process is using port 3000
+
+**Full troubleshooting guide**: [`.claude/development-guide.md#troubleshooting`](.claude/development-guide.md#troubleshooting)
+
+---
+
+## 📄 License
+
+MIT
+
+---
+
+## 🔗 Links
+
+- **Swagger API Docs**: http://localhost:3000/api (when server is running)
+- **Architecture Documentation**: [`.claude/architecture.md`](.claude/architecture.md)
+- **API Reference**: [`.claude/api-reference.md`](.claude/api-reference.md)
+- **Development Guide**: [`.claude/development-guide.md`](.claude/development-guide.md)
+- **Testing Guide**: [`.claude/testing-guide.md`](.claude/testing-guide.md)
+
+---
+
+## 📞 Support
+
+For issues and questions:
+1. Check documentation in `.claude/` directory
+2. Review troubleshooting guide
+3. Check existing GitHub issues
+4. Create a new issue with:
+   - Environment details (Node.js version, OS)
+   - Error messages and logs
+   - Steps to reproduce
+
+---
+
+**Built with NestJS** • **Powered by XState v5** • **Type-safe with Zod**

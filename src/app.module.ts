@@ -26,9 +26,25 @@ import { EnvironmentSchema } from './config/environment.schema';
 @Module({
   imports: [
     // Global configuration module with Zod validation
+    // Multi-environment support with proper override order:
+    // - Base configuration: .env (default values, shared config)
+    // - Environment overrides: .env.{NODE_ENV} (environment-specific values)
+    // - Later files override earlier files (via spread operator)
+    //
+    // Load order (left to right):
+    // 1. .env - base configuration (loaded first)
+    // 2. .env.{NODE_ENV} - environment-specific overrides (loaded second, overrides base)
+    //
+    // Example with NODE_ENV=test:
+    // - .env provides: GUS_BASE_URL=https://wyszukiwarkaregon.stat.gov.pl (production)
+    // - .env.test overrides: GUS_BASE_URL=https://wyszukiwarkaregontest.stat.gov.pl (test)
+    // - Final result: test environment URL is used ✅
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: '.env',
+      envFilePath: [
+        '.env',                                           // Base config (loaded first)
+        `.env.${process.env.NODE_ENV || 'development'}`, // Environment overrides (loaded second, overrides base)
+      ],
       cache: true,
       validate: (config) => EnvironmentSchema.parse(config),
     }),
