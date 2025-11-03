@@ -35,6 +35,12 @@ describe('Companies Integration Tests', () => {
       expect(response.body).toHaveProperty('zrodloDanych');
       expect(['KRS', 'CEIDG', 'GUS']).toContain(response.body.zrodloDanych);
 
+      // Validate registrySignature field
+      expect(response.body).toHaveProperty('registrySignature');
+      expect(typeof response.body.registrySignature).toBe('string');
+      expect(response.body.registrySignature).toMatch(/^(KRS|CEIDG|GUS) /);
+      expect(response.body.registrySignature.length).toBeGreaterThan(5);
+
       // Validate optional fields that are present in mock
       expect(response.body).toHaveProperty('regon');
       expect(response.body).toHaveProperty('krs');

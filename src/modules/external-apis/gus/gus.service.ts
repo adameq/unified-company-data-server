@@ -403,6 +403,14 @@ export class GusService {
 
 
   /**
+   * Get last used session ID for registry signature generation
+   * Returns undefined if no active session exists
+   */
+  getLastSessionId(): string | undefined {
+    return this.sessionManager.getCurrentSessionId();
+  }
+
+  /**
    * Health check for GUS SOAP API
    * Uses GetValue operation with StatusUslugi parameter to verify service availability
    *

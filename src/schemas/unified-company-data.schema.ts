@@ -141,6 +141,11 @@ export const UnifiedCompanyDataSchema = z
       .string()
       .datetime('Invalid ISO datetime format')
       .describe('Last update timestamp'),
+
+    registrySignature: z
+      .string()
+      .min(1)
+      .describe('Official registry signature for legal evidence (timestamp or document ID from source registry)'),
   })
   .refine(
     (data) => {

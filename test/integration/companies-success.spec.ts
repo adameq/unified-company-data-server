@@ -52,6 +52,12 @@ describe('Integration Tests - Successful Company Lookup', () => {
       expect(response.body).toHaveProperty('typPodmiotu');
       expect(response.body).toHaveProperty('zrodloDanych');
 
+      // Verify registrySignature field
+      expect(response.body).toHaveProperty('registrySignature');
+      expect(typeof response.body.registrySignature).toBe('string');
+      expect(response.body.registrySignature).toMatch(/^(KRS|CEIDG|GUS) /);
+      expect(response.body.registrySignature.length).toBeGreaterThan(5);
+
       // Verify required address fields
       expect(response.body.adres).toHaveProperty('miejscowosc');
       expect(response.body.adres).toHaveProperty('kodPocztowy');

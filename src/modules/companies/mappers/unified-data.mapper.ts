@@ -31,6 +31,7 @@ type UnifiedCompanyData = z.infer<typeof UnifiedCompanyDataSchema>;
 export interface MappingContext {
   nip: string;
   correlationId: string;
+  gusSessionId?: string;
   gusClassification?: GusClassificationResponse;
   gusDetailedData?: GusLegalPersonReport | GusPhysicalPersonReport;
   krsData?: KrsResponse;
@@ -274,6 +275,9 @@ export class UnifiedDataMapper {
       formaPrawna: undefined,
       zrodloDanych: 'GUS',
       dataAktualizacji: new Date().toISOString(),
+      registrySignature: context.gusSessionId
+        ? `GUS sessionId ${context.gusSessionId}`
+        : `GUS regon ${gusClassification.Regon}`,
     };
   }
 
@@ -333,6 +337,7 @@ export class UnifiedDataMapper {
       pkd: undefined, // PKD codes not provided by this service
       zrodloDanych: 'KRS' as const,
       dataAktualizacji: new Date().toISOString(),
+      registrySignature: `KRS stanZDnia ${krsData.odpis.naglowekA.stanZDnia}`,
     };
   }
 
@@ -375,6 +380,7 @@ export class UnifiedDataMapper {
       pkd: undefined, // PKD codes not provided by this service
       zrodloDanych: 'CEIDG' as const,
       dataAktualizacji: new Date().toISOString(),
+      registrySignature: `CEIDG id ${ceidgData.id}`,
     };
   }
 
@@ -435,6 +441,9 @@ export class UnifiedDataMapper {
       pkd: undefined, // PKD codes not provided by this service
       zrodloDanych: 'GUS' as const,
       dataAktualizacji: new Date().toISOString(),
+      registrySignature: context.gusSessionId
+        ? `GUS sessionId ${context.gusSessionId}`
+        : `GUS regon ${this.extractGusField(gusDetailedData, cfg.regon.fieldName, cfg.regon.defaultValue)}`,
     };
   }
 

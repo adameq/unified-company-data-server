@@ -304,6 +304,15 @@ export class GusSessionManager {
   }
 
   /**
+   * Get current session ID without creating new session
+   * Returns undefined if no active session exists
+   * Used for registry signature generation
+   */
+  getCurrentSessionId(): string | undefined {
+    return this.currentSession?.sessionId;
+  }
+
+  /**
    * Clear current session (for logout or error recovery)
    */
   clearSession(): void {

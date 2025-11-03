@@ -187,6 +187,7 @@ export class OrchestrationService implements OnModuleInit {
           const mappingContext = {
             nip: context.nip,
             correlationId: context.correlationId,
+            gusSessionId: this.gusService.getLastSessionId(),
             gusClassification: context.classification,
             gusDetailedData: undefined,
             krsData: undefined,
@@ -206,6 +207,7 @@ export class OrchestrationService implements OnModuleInit {
           const mappingContext = {
             nip: context.nip,
             correlationId: context.correlationId,
+            gusSessionId: this.gusService.getLastSessionId(),
             gusClassification: context.classification,
             gusDetailedData: context.gusData,
             krsData: context.krsData,

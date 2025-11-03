@@ -122,6 +122,12 @@ export class UnifiedCompanyDataDto {
   dataAktualizacji!: string;
 
   @ApiProperty({
+    description: 'Official registry signature for legal evidence (timestamp or document ID from source registry)',
+    example: 'KRS stanZDnia 15.01.2024',
+  })
+  registrySignature!: string;
+
+  @ApiProperty({
     description: 'REGON number (9 or 14 digits)',
     example: '123456789',
     nullable: true,
