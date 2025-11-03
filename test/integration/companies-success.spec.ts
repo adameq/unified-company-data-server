@@ -196,10 +196,6 @@ describe('Integration Tests - Successful Company Lookup', () => {
       if (response.body.krs) {
         expect(response.body.krs).toMatch(/^\d{10}$/);
       }
-
-      if (response.body.dataRozpoczeciaDzialalnosci) {
-        expect(response.body.dataRozpoczeciaDzialalnosci).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-      }
     });
 
     it('should handle legal entity without KRS number in GUS data (negative data scenario)', async () => {

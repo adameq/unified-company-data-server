@@ -67,29 +67,6 @@ export class AddressDto {
 }
 
 /**
- * DTO for PKD (Polish Classification of Activities) code
- */
-export class PkdDto {
-  @ApiProperty({
-    description: 'PKD classification code',
-    example: '62.01.Z',
-  })
-  kod!: string;
-
-  @ApiProperty({
-    description: 'PKD activity description',
-    example: 'Działalność związana z oprogramowaniem',
-  })
-  nazwa!: string;
-
-  @ApiProperty({
-    description: 'Whether this is the primary business activity',
-    example: true,
-  })
-  czyGlowny!: boolean;
-}
-
-/**
  * DTO for unified company data response
  */
 export class UnifiedCompanyDataDto {
@@ -131,23 +108,6 @@ export class UnifiedCompanyDataDto {
   isActive!: boolean;
 
   @ApiProperty({
-    description: 'Business activity start date',
-    example: '2020-01-15',
-    format: 'date',
-    nullable: true,
-    required: false,
-  })
-  dataRozpoczeciaDzialalnosci?: string | null;
-
-  @ApiProperty({
-    description: 'List of PKD business activity codes',
-    type: [PkdDto],
-    nullable: true,
-    required: false,
-  })
-  pkd?: PkdDto[] | null;
-
-  @ApiProperty({
     description: 'Data source identifier',
     example: 'GUS',
     enum: ['GUS', 'KRS', 'CEIDG', 'MOCK'],
@@ -176,15 +136,6 @@ export class UnifiedCompanyDataDto {
     required: false,
   })
   krs?: string | null;
-
-  @ApiProperty({
-    description: 'Business activity end date (if applicable)',
-    example: '2025-12-31',
-    format: 'date',
-    nullable: true,
-    required: false,
-  })
-  dataZakonczeniaDzialalnosci?: string | null;
 
   @ApiProperty({
     description: 'Legal form of the company',

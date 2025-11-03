@@ -38,7 +38,6 @@ describe('Companies Integration Tests', () => {
       // Validate optional fields that are present in mock
       expect(response.body).toHaveProperty('regon');
       expect(response.body).toHaveProperty('krs');
-      expect(response.body).toHaveProperty('dataRozpoczeciaDzialalnosci');
       expect(response.body).toHaveProperty('formaPrawna');
 
       // Validate address structure according to OpenAPI

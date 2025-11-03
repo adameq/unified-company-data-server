@@ -143,7 +143,16 @@ The service follows a constitutional programming approach:
       dataSource: companyData.zrodloDanych,
     });
 
-    return companyData;
+    // Omit internal fields before returning to API consumer
+    // These fields are used internally for business logic but not exposed in API
+    const {
+      dataRozpoczeciaDzialalnosci,
+      dataZakonczeniaDzialalnosci,
+      pkd,
+      ...publicData
+    } = companyData;
+
+    return publicData as UnifiedCompanyDataDto;
   }
 
 }
