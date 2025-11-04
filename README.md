@@ -1,5 +1,9 @@
 # Unified Company Data Server
 
+![Build Status](https://github.com/adameq/unified-company-data-server/actions/workflows/deploy.yml/badge.svg)
+![Docker](https://img.shields.io/badge/docker-ready-blue)
+![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-green)
+
 > NestJS microservice orchestrating data retrieval from Polish government APIs (GUS, KRS, CEIDG) to provide unified company information using NIP numbers.
 
 ## 🚀 Features
@@ -15,6 +19,7 @@
 
 - Node.js 18+
 - pnpm (package manager)
+- Docker (for deployment)
 - GUS API key (20+ chars) - for production
 - CEIDG JWT token (50+ chars) - for production
 
@@ -59,6 +64,23 @@ curl -X POST http://localhost:3000/api/companies \
   -H "Authorization: Bearer dev-key-123" \
   -H "Content-Type: application/json" \
   -d '{"nip": "5260250995"}'
+```
+
+## 🚀 Deployment
+
+Automated deployment using GitHub Actions + Docker + Watchtower.
+
+**Documentation:**
+- [DEPLOYMENT_CI_CD.md](./DEPLOYMENT_CI_CD.md) - CI/CD pipeline with GitHub Actions
+- [SETUP_GITHUB_SECRETS.md](./SETUP_GITHUB_SECRETS.md) - Configure secrets for deployment
+- [DEPLOYMENT.md](./DEPLOYMENT.md) - Manual deployment guide
+
+**Quick deploy:**
+```bash
+# 1. Configure GitHub Secrets (see SETUP_GITHUB_SECRETS.md)
+# 2. Push to main branch
+git push origin main
+# → Automatic deployment to Hetzner server (~5-8 minutes)
 ```
 
 ---

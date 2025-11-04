@@ -1,0 +1,161 @@
+name: Build and Deploy API
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'Dockerfile'
+      - 'docker-compose.yml'
+      - 'tsconfig.json'
+      - 'nest-cli.json'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/adameq/thespace-api
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=sha-
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Deploy to Hetzner server
+        env:
+          SSH_HOST: ${{ secrets.HETZNER_SSH_HOST }}
+          SSH_USER: ${{ secrets.HETZNER_SSH_USER }}
+          SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+          DEPLOY_PATH: /opt/thespace-api
+          # GUS API Configuration
+          GUS_USER_KEY: ${{ secrets.GUS_USER_KEY }}
+          GUS_BASE_URL: ${{ secrets.GUS_BASE_URL }}
+          # CEIDG API Configuration
+          CEIDG_JWT_TOKEN: ${{ secrets.CEIDG_JWT_TOKEN }}
+          CEIDG_BASE_URL: ${{ secrets.CEIDG_BASE_URL }}
+          # KRS API Configuration
+          KRS_BASE_URL: ${{ secrets.KRS_BASE_URL }}
+          # Application Configuration
+          APP_API_KEYS: ${{ secrets.APP_API_KEYS }}
+          CORS_ORIGINS: ${{ secrets.CORS_ORIGINS }}
+          # Optional Configuration
+          REQUEST_TIMEOUT: ${{ secrets.REQUEST_TIMEOUT }}
+          GUS_RATE_LIMIT_PER_SECOND: ${{ secrets.GUS_RATE_LIMIT_PER_SECOND }}
+          THROTTLE_TTL: ${{ secrets.THROTTLE_TTL }}
+          THROTTLE_LIMIT: ${{ secrets.THROTTLE_LIMIT }}
+        run: |
+          # Setup SSH
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H $SSH_HOST >> ~/.ssh/known_hosts
+
+          # Generate .env file with all required variables
+          cat > .env << EOF
+          # Node Environment
+          NODE_ENV=production
+          PORT=3000
+
+          # GUS API Configuration
+          GUS_USER_KEY=${GUS_USER_KEY}
+          GUS_BASE_URL=${GUS_BASE_URL:-https://wyszukiwarkaregon.stat.gov.pl/wsBIR/UslugaBIRzewnPubl.svc}
+
+          # CEIDG API Configuration
+          CEIDG_JWT_TOKEN=${CEIDG_JWT_TOKEN}
+          CEIDG_BASE_URL=${CEIDG_BASE_URL:-https://dane.biznes.gov.pl/api/ceidg/v2}
+
+          # KRS API Configuration
+          KRS_BASE_URL=${KRS_BASE_URL:-https://api-krs.ms.gov.pl}
+
+          # Application Configuration
+          APP_API_KEYS=${APP_API_KEYS}
+          CORS_ORIGINS=${CORS_ORIGINS}
+
+          # Timeouts and Rate Limiting
+          REQUEST_TIMEOUT=${REQUEST_TIMEOUT:-30000}
+          GUS_RATE_LIMIT_PER_SECOND=${GUS_RATE_LIMIT_PER_SECOND:-10}
+
+          # Throttling (Production)
+          THROTTLE_TTL=${THROTTLE_TTL:-60000}
+          THROTTLE_LIMIT=${THROTTLE_LIMIT:-100}
+          EOF
+
+          # Copy .env to server
+          scp -i ~/.ssh/deploy_key .env ${SSH_USER}@${SSH_HOST}:${DEPLOY_PATH}/.env
+
+          # SSH and deploy
+          ssh -i ~/.ssh/deploy_key ${SSH_USER}@${SSH_HOST} << 'ENDSSH'
+            cd /opt/thespace-api
+
+            # Set proper permissions
+            chmod 600 .env
+
+            # Login to GHCR
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            # Pull new image and restart
+            docker-compose pull
+            docker-compose up -d --remove-orphans
+
+            # Cleanup
+            docker image prune -f
+
+            # Wait for health check
+            echo "Waiting for API to be healthy..."
+            for i in {1..30}; do
+              if docker exec thespace-api wget -qO- http://localhost:3000/api/health > /dev/null 2>&1; then
+                echo "✅ API is healthy!"
+                exit 0
+              fi
+              echo "Waiting... ($i/30)"
+              sleep 2
+            done
+            echo "⚠️  Health check timeout - check logs"
+            docker logs --tail=50 thespace-api
+          ENDSSH
+
+          # Cleanup local SSH key
+          rm ~/.ssh/deploy_key
+
+      - name: Deployment summary
+        run: |
+          echo "✅ API deployed successfully!"
+          echo "🔗 Image: ${{ env.IMAGE_NAME }}:latest"
+          echo "📦 SHA tag: ${{ steps.meta.outputs.tags }}"
