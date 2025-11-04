@@ -117,8 +117,10 @@ jobs:
           THROTTLE_LIMIT=${THROTTLE_LIMIT:-100}
           EOF
 
-          # Copy .env to server
+          # Copy configuration files to server
           scp -i ~/.ssh/deploy_key .env ${SSH_USER}@${SSH_HOST}:${DEPLOY_PATH}/.env
+          scp -i ~/.ssh/deploy_key docker-compose.yml ${SSH_USER}@${SSH_HOST}:${DEPLOY_PATH}/docker-compose.yml
+          scp -i ~/.ssh/deploy_key Caddyfile ${SSH_USER}@${SSH_HOST}:${DEPLOY_PATH}/Caddyfile
 
           # SSH and deploy
           ssh -i ~/.ssh/deploy_key ${SSH_USER}@${SSH_HOST} << 'ENDSSH'
