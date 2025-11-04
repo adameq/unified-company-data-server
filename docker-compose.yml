@@ -3,10 +3,10 @@ version: '3.8'
 services:
   api:
     image: ghcr.io/adameq/thespace-api:latest
-    container_name: thespace-api
+    container_name: thespace-backend
     restart: unless-stopped
     networks:
-      - api-network
+      - thespace-network
     env_file:
       - .env
     environment:
@@ -20,23 +20,6 @@ services:
       start_period: 10s
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-
-  caddy:
-    image: caddy:2-alpine
-    container_name: thespace-api-caddy
-    restart: unless-stopped
-    ports:
-      - "3001:80"
-      - "3443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    networks:
-      - api-network
-    depends_on:
-      api:
-        condition: service_healthy
 
   watchtower:
     image: containrrr/watchtower:latest
@@ -53,13 +36,9 @@ services:
       - WATCHTOWER_LABEL_ENABLE=true
       - WATCHTOWER_ROLLING_RESTART=true
     networks:
-      - api-network
+      - thespace-network
     command: --debug
 
 networks:
-  api-network:
-    driver: bridge
-
-volumes:
-  caddy_data:
-  caddy_config:
+  thespace-network:
+    external: true
