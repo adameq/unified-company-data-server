@@ -135,29 +135,29 @@ export const EnvironmentSchema = z
     APP_ENABLE_HELMET: z.coerce.boolean().default(true),
   })
   .superRefine((config, ctx) => {
-    // Production safety check: fail fast if using default URLs in production
-    // NOTE: .superRefine() runs AFTER .default() transformations, so we compare
-    // the resolved config values against hardcoded defaults (not process.env)
-    // Test and development environments are allowed to use default (test) URLs
+    // Production safety check: fail fast if API URLs not explicitly configured
+    // We check process.env directly to ensure variables were explicitly set,
+    // even if their values match the defaults (which is valid for production Polish gov APIs)
+    // Test and development environments are allowed to rely on defaults
     if (config.NODE_ENV === 'production') {
-      const usingDefaults: string[] = [];
+      const missingExplicitConfig: string[] = [];
 
-      // Compare resolved values with hardcoded defaults
-      // This catches both missing env vars AND explicitly set default values
-      if (config.GUS_BASE_URL === DEFAULT_GUS_BASE_URL) usingDefaults.push('GUS_BASE_URL');
-      if (config.GUS_WSDL_URL === DEFAULT_GUS_WSDL_URL) usingDefaults.push('GUS_WSDL_URL');
-      if (config.KRS_BASE_URL === DEFAULT_KRS_BASE_URL) usingDefaults.push('KRS_BASE_URL');
-      if (config.CEIDG_BASE_URL === DEFAULT_CEIDG_BASE_URL) usingDefaults.push('CEIDG_BASE_URL');
+      // Check if environment variables were explicitly provided
+      // This ensures intentional configuration without blocking legitimate production URLs
+      if (!process.env.GUS_BASE_URL) missingExplicitConfig.push('GUS_BASE_URL');
+      if (!process.env.GUS_WSDL_URL) missingExplicitConfig.push('GUS_WSDL_URL');
+      if (!process.env.KRS_BASE_URL) missingExplicitConfig.push('KRS_BASE_URL');
+      if (!process.env.CEIDG_BASE_URL) missingExplicitConfig.push('CEIDG_BASE_URL');
 
-      if (usingDefaults.length > 0) {
+      if (missingExplicitConfig.length > 0) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message:
-            'Production environment detected with default API URLs! ' +
-            'The following environment variables are using default values: ' +
-            usingDefaults.join(', ') +
-            '. This is a security risk. Please explicitly set these variables ' +
-            'in your production environment to avoid unintended API connections.',
+            'Production environment requires explicit API URL configuration! ' +
+            'The following environment variables must be explicitly set: ' +
+            missingExplicitConfig.join(', ') +
+            '. Even if using default values, you must set them explicitly ' +
+            'in your production environment to ensure intentional configuration.',
         });
       }
 
