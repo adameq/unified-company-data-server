@@ -1,9 +1,5 @@
 # Unified Company Data Server
 
-![Build Status](https://github.com/adameq/unified-company-data-server/actions/workflows/deploy.yml/badge.svg)
-![Docker](https://img.shields.io/badge/docker-ready-blue)
-![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-green)
-
 > NestJS microservice orchestrating data retrieval from Polish government APIs (GUS, KRS, CEIDG) to provide unified company information using NIP numbers.
 
 ## 🚀 Features
@@ -17,9 +13,8 @@
 
 ## 📋 Prerequisites
 
-- Node.js 18+
+- Node.js 20+
 - pnpm (package manager)
-- Docker (for deployment)
 - GUS API key (20+ chars) - for production
 - CEIDG JWT token (50+ chars) - for production
 
@@ -68,20 +63,21 @@ curl -X POST http://localhost:3000/api/companies \
 
 ## 🚀 Deployment
 
-Automated deployment using GitHub Actions + Docker + Watchtower.
+**Recommended Platforms:**
+- Railway.app ($5/m, zero config)
+- Koyeb ($3.40/m, free tier available)
+- Render.com ($7/m, predictable pricing)
+- Google Cloud Run (serverless, $0-2/m)
 
-**Documentation:**
-- [DEPLOYMENT_CI_CD.md](./DEPLOYMENT_CI_CD.md) - CI/CD pipeline with GitHub Actions
-- [SETUP_GITHUB_SECRETS.md](./SETUP_GITHUB_SECRETS.md) - Configure secrets for deployment
-- [DEPLOYMENT.md](./DEPLOYMENT.md) - Manual deployment guide
+**Configuration:**
+All platforms auto-detect NestJS from `package.json`. Set environment variables in platform dashboard:
+- `GUS_USER_KEY`
+- `CEIDG_JWT_TOKEN`
+- `APP_API_KEYS`
+- `APP_CORS_ALLOWED_ORIGINS` (e.g., `https://your-frontend.pages.dev`)
 
-**Quick deploy:**
-```bash
-# 1. Configure GitHub Secrets (see SETUP_GITHUB_SECRETS.md)
-# 2. Push to main branch
-git push origin main
-# → Automatic deployment to Hetzner server (~5-8 minutes)
-```
+**Build command:** `pnpm install && pnpm build`
+**Start command:** `pnpm start` (or `node dist/main.js`)
 
 ---
 
